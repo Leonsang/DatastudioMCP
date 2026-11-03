@@ -20,6 +20,7 @@ import {
   lintSpec,
   loadSpec,
   openReport,
+  patchComponent,
   reloadReport,
 } from './ops.js';
 
@@ -43,6 +44,7 @@ Escritura (modo /edit)
   create --type <tipo> --box x,y,w,h [--page <id>] [--dataset <id|@campo>]
          [--dims a,b] [--metrics m1,m2] [--padding N]
   delete <id>
+  patch <id> [--date-days N] [--strip-styles]   Periodo por defecto de un control / quitar estilos de tema
 
 Informe como codigo
   lint <spec.json>                 Valida contra las skills (reticula, lienzo, KPIs, densidad)
@@ -137,6 +139,14 @@ async function main(): Promise<unknown> {
         dimensions: list(flags.dims),
         metrics: list(flags.metrics),
         ...(padding !== undefined ? { padding } : {}),
+      });
+    }
+    case 'patch': {
+      const days = num(flags['date-days']);
+      return patchComponent({
+        componentId: need(pos[0], 'componentId'),
+        ...(days !== undefined ? { dateRangeDays: days } : {}),
+        ...(flags['strip-styles'] ? { stripThemeStyles: true } : {}),
       });
     }
     case 'delete':

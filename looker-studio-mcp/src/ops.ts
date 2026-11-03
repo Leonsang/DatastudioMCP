@@ -22,6 +22,7 @@ import {
   deleteComponentScript,
   exportReportScript,
   installNetMonitorScript,
+  patchComponentScript,
   readNetLogScript,
   readyStateScript,
 } from './looker/scripts2.js';
@@ -76,8 +77,10 @@ export async function openReport(url: string): Promise<{ url: string }> {
   const browser = await getBrowser();
   const pages = await browser.pages();
   const page = pages.find((p) => REPORT_URL_RE.test(p.url())) ?? (await browser.newPage());
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  // Bring to front BEFORE navigating: in a hidden tab the editor does not boot
+  // (observed 2026-11-03: it ends on the home page with the model empty).
   await page.bringToFront();
+  await page.goto(url, { waitUntil: 'networkidle2', timeout: 90_000 });
   await waitReady(page);
   return { url: page.url() };
 }
@@ -85,7 +88,8 @@ export async function openReport(url: string): Promise<{ url: string }> {
 /** Reloads the report tab: renders components created via the API and drops any unsaved invalid state. */
 export async function reloadReport(): Promise<{ url: string; components: number }> {
   const page = await getReportPage();
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.bringToFront();
+  await page.reload({ waitUntil: 'networkidle2', timeout: 90_000 });
   await waitReady(page);
   const s = await evaluateOn(page, T, readyStateScript);
   return { url: s.url, components: s.components };
@@ -277,7 +281,8 @@ export async function applySpec(specOrFile: string | ReportSpec, opts: { dryRun?
       if (exists) {
         await updateExisting(page, existingId!, c);
         state.keys[c.key] = existingId!;
-        result.actions.push({ key: c.key, action: 'update', componentId: existingId! });
+        const extra = await patchIfNeeded(page, existingId!, c);
+        result.actions.push({ key: c.key, action: 'update', componentId: existingId!, ...(extra.length ? { warnings: extra } : {}) });
       } else {
         const r = await createComponent({
           type: c.type, box: { x: c.x, y: c.y, width: c.w, height: c.h },
@@ -285,7 +290,8 @@ export async function applySpec(specOrFile: string | ReportSpec, opts: { dryRun?
           dimensions: c.dimensions, metrics: c.metrics, ...(c.padding !== undefined ? { padding: c.padding } : {}),
         });
         state.keys[c.key] = r.componentId!;
-        result.actions.push({ key: c.key, action: 'create', componentId: r.componentId!, warnings: r.warnings });
+        const extra = await patchIfNeeded(page, r.componentId!, c);
+        result.actions.push({ key: c.key, action: 'create', componentId: r.componentId!, warnings: [...r.warnings, ...extra] });
       }
     } catch (e) {
       result.actions.push({ key: c.key, action: exists ? 'update' : 'create', error: (e as Error).message });
@@ -297,6 +303,24 @@ export async function applySpec(specOrFile: string | ReportSpec, opts: { dryRun?
     result.diagnose = await diagnoseWithKnowledge();
   }
   return result;
+}
+
+async function patchIfNeeded(page: Page, id: string, c: ResolvedComponent): Promise<string[]> {
+  if (c.dateRangeDays === undefined && !c.stripStyles) return [];
+  const r = await evaluateOn(page, T, patchComponentScript, {
+    componentId: id,
+    ...(c.dateRangeDays !== undefined ? { dateRangeDays: c.dateRangeDays } : {}),
+    ...(c.stripStyles ? { stripThemeStyles: true } : {}),
+  });
+  if (!r.ok) throw new Error(r.error);
+  return r.changes;
+}
+
+export async function patchComponent(args: { componentId: string; dateRangeDays?: number; stripThemeStyles?: boolean }) {
+  const page = await editPage();
+  const r = await evaluateOn(page, T, patchComponentScript, args);
+  if (!r.ok) throw new Error(r.error);
+  return r;
 }
 
 async function updateExisting(page: Page, id: string, c: ResolvedComponent): Promise<void> {

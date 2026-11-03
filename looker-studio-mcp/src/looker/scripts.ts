@@ -456,6 +456,26 @@ export async function bindFieldsScript(args: BindFieldsArgs): Promise<BindFields
     const defs = metFields.map(mkDef);
     comp.updateMetrics('primary', mode === 'append' ? [...existing('metrics'), ...defs] : defs);
   }
+  // Re-point orphan sort columns (reason 268 "Orden no valido"): after replacing
+  // dims/metrics, sortData may still reference concepts that are gone (e.g. from a template).
+  try {
+    const k = comp.config.config.datasource.keys;
+    const cur = (slot: string) => (k[slot] && k[slot].value && k[slot].value.primary) || [];
+    const live = new Set<string>([...cur('dimensions'), ...cur('metrics')]);
+    const sd = k.sortData && Array.isArray(k.sortData.value) ? k.sortData.value : null;
+    if (sd && sd.some((s: any) => !live.has(s.sortColumn))) {
+      const isTime = /linechart|areachart|timeline|combochart/.test(String(comp.config.config.display.type));
+      const col = isTime ? cur('dimensions')[0] ?? cur('metrics')[0] : cur('metrics')[0] ?? cur('dimensions')[0];
+      if (col) {
+        const v = [{ sortDir: isTime ? 0 : 1, sortColumn: col }];
+        if (typeof comp.setDataSourceKeyValue === 'function') comp.setDataSourceKeyValue('sortData', v, true, true);
+        else k.sortData.value = v;
+        warnings.push(`Orden reasignado a ${isTime ? 'la primera dimension (asc)' : 'la primera metrica (desc)'}.`);
+      }
+    }
+  } catch (e: any) {
+    warnings.push('No se pudo revisar sortData: ' + (e && e.message));
+  }
   try { comp.syncState(true); } catch (e: any) { warnings.push('syncState fallo: ' + (e && e.message)); }
   // Persist: wrapperSaveService.save([comp]) -> POST updatePage with the full page
   // snapshot (verified 2026-11-03: bindings survive a reload in /edit).
@@ -559,9 +579,16 @@ export function diagnoseReportScript(): DiagnoseResult {
           if (!def) issues.push({ severity: 'error', componentId: id, pageId: pid, code: 'MISSING_CONCEPT_DEF', message: `${slot} usa ${n} sin conceptDef.` });
           else if (src && concepts && !concepts[src] && !def.queryTimeTransformation?.dataTransformation?.formula) issues.push({ severity: 'error', componentId: id, pageId: pid, code: 'FIELD_NOT_IN_SCHEMA', message: `Campo "${src}" no existe en el origen ${dsId} (migracion o campo eliminado).` });
           const agg = def?.queryTimeTransformation?.dataTransformation?.aggregation;
+          // Only native metrics (type 1): dimensions used as metrics (Sheets/CSV) need an explicit aggregation.
           const dflt = src && concepts && concepts[src] ? concepts[src].defaultAggregation : undefined;
-          if (def && agg !== undefined && dflt !== undefined && agg !== dflt) issues.push({ severity: 'warning', componentId: id, pageId: pid, code: 'CUSTOM_AGGREGATION', message: `${slot} "${concepts[src].displayName ?? src}" usa agregacion ${agg} distinta de la del origen (${dflt}). Si el origen no permite editar campos en informes, el grafico falla: revincula con bind_fields_to_component.` });
+          if (def && agg !== undefined && dflt !== undefined && agg !== dflt && concepts[src].type === 1) issues.push({ severity: 'warning', componentId: id, pageId: pid, code: 'CUSTOM_AGGREGATION', message: `${slot} "${concepts[src].displayName ?? src}" usa agregacion ${agg} distinta de la del origen (${dflt}). Si el origen no permite editar campos en informes, el grafico falla: revincula con bind_fields_to_component.` });
         }
+      }
+      const liveQt = new Set<string>(['dimensions', 'metrics'].flatMap((s) => (ds[s]?.value ? (Object.values(ds[s].value).flat() as string[]) : [])));
+      const sorts = Array.isArray(ds.sortData?.value) ? ds.sortData.value : [];
+      for (const srt of sorts) {
+        if (srt && srt.sortColumn && !liveQt.has(srt.sortColumn))
+          issues.push({ severity: 'error', componentId: id, pageId: pid, code: 'SORT_INVALID', message: `${type} ordena por ${srt.sortColumn}, que no esta entre sus dimensiones/metricas ("Orden no valido").` });
       }
       if (ds.metrics && !(Object.values(ds.metrics.value || {}).flat().length) && ['kpi-metric', 'simple-table', 'simple-barchart', 'simple-linechart', 'simple-piechart'].includes(type)) {
         issues.push({ severity: 'error', componentId: id, pageId: pid, code: 'NO_METRICS', message: `${type} sin metricas: "Configuracion de grafico no valida".` });
