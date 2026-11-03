@@ -1,0 +1,38 @@
+{
+  "name": "looker-studio-mcp",
+  "version": "0.2.0",
+  "description": "MCP server que controla un informe de Looker Studio abierto en Chrome/Edge via CDP (puppeteer-core).",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "looker-studio-mcp": "dist/index.js",
+    "ls-studio": "dist/cli.js"
+  },
+  "files": [
+    "skills",
+    "dist",
+    "knowledge",
+    "examples",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "bundle": "node tools/build-bundle.mjs",
+    "cli": "node dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "puppeteer-core": "^25.16.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
