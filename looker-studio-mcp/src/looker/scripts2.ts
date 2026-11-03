@@ -206,31 +206,26 @@ export function createComponentScript(args: CreateComponentArgs): CreateComponen
     left: Math.round(args.box.x), top: Math.round(args.box.y), width: Math.round(args.box.width), height: Math.round(args.box.height),
   });
 
-  // Switch dataset and scrub field references (qt_ concepts) from the source.
+  // Switch dataset but KEEP the template's concepts: verified 2026-11-03 with
+  // tools/probe-template.mjs -> switching only the dataset saves (200); emptying
+  // conceptDefs / dims / metrics makes updatePage return 400. The caller binds
+  // the new fields (which replaces dims/metrics) before the first save.
   const keys = cfg.config.datasource && cfg.config.datasource.keys;
   const curDs = keys && keys.dataset && keys.dataset.value && keys.dataset.value.id;
   const wantDs = args.datasetId || curDs;
   if (keys && wantDs && wantDs !== curDs) {
     keys.dataset = { stateKey: 'ds', dominant: 2, value: { id: wantDs } };
-    const scrub = (v: any): any => {
-      if (typeof v === 'string') return v.startsWith('qt_') ? undefined : v;
-      if (Array.isArray(v)) return v.map(scrub).filter((x) => x !== undefined);
-      if (v && typeof v === 'object') {
-        const o: any = {};
-        for (const [k, x] of Object.entries(v)) { const s = scrub(x); if (s !== undefined) o[k] = s; }
-        return o;
-      }
-      return v;
-    };
-    for (const k of Object.keys(keys)) {
-      if (k === 'dataset') continue;
-      if (keys[k] && 'value' in keys[k]) {
-        const s = scrub(keys[k].value);
-        if (s === undefined) delete keys[k].value; else keys[k].value = s;
-      }
-    }
-    cfg.conceptDefs = {};
-    warnings.push(`Origen cambiado de ${curDs} a ${wantDs}: campos del original eliminados; vincula campos con bind.`);
+    if (curDs) warnings.push(`Origen cambiado de ${curDs} a ${wantDs}: los campos de la plantilla siguen hasta que vincules los nuevos (bind).`);
+  }
+  // Templates come from other reports: drop their theme overrides (colors, fonts,
+  // borders, shadows) so the target report's theme applies [diseno-layout §6].
+  // Observed 2026-11-03: a Firebase (dark theme) template brought fontColor #F3F3F3.
+  if (source === 'template' && cfg.config.display && cfg.config.display.keys) {
+    const dk = cfg.config.display.keys;
+    const THEME = /color|font|background|border|shadow|opacity/i;
+    const dropped = Object.keys(dk).filter((k) => THEME.test(k));
+    for (const k of dropped) delete dk[k];
+    if (dropped.length) warnings.push(`Estilos de tema de la plantilla eliminados: ${dropped.join(', ')}.`);
   }
   if (args.padding !== undefined && cfg.config.display && cfg.config.display.keys) {
     const dk = cfg.config.display.keys;
@@ -286,6 +281,48 @@ export function deleteComponentScript(componentId: string): DeleteComponentResul
     return { ok: false, method: 'select', needsKeyboard: true };
   } catch (e: any) {
     return { ok: false, method: null, needsKeyboard: false, error: 'No se pudo seleccionar: ' + (e && e.message) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// patchComponentScript: control default date range + theme-style reset.
+// behavior.onSelect[].init.dateRange = {startOffsetUnit:3 (days), startOffset, endOffsetUnit, endOffset}
+// ---------------------------------------------------------------------------
+
+export function patchComponentScript(args: { componentId: string; dateRangeDays?: number; stripThemeStyles?: boolean }): {
+  ok: boolean;
+  changes: string[];
+  error?: string;
+} {
+  const w = window as any;
+  const changes: string[] = [];
+  try {
+    const inj = w.angular.element(document.body).injector();
+    const report = inj.get('legoUndoRedoService').report;
+    const all = [...report.pages.flatMap((p: any) => p.components), ...report.components];
+    const comp = all.find((c: any) => c.getId() === args.componentId);
+    if (!comp) return { ok: false, changes, error: `Componente ${args.componentId} no encontrado.` };
+    if (args.dateRangeDays !== undefined) {
+      const acts = (comp.config.behavior && comp.config.behavior.onSelect) || [];
+      const act = acts.find((a: any) => a.action === 'lego-change-date-range');
+      if (!act) return { ok: false, changes, error: 'El componente no es un control de periodo (sin lego-change-date-range).' };
+      act.init = act.init || {};
+      act.init.dateRange = { startOffsetUnit: 3, startOffset: Math.round(args.dateRangeDays), endOffsetUnit: 3, endOffset: 1 };
+      act.init.updateFrequency = 'Rolling';
+      changes.push(`dateRange=ultimos ${Math.round(args.dateRangeDays)} dias`);
+    }
+    if (args.stripThemeStyles) {
+      const dk = comp.config.config.display.keys || {};
+      const THEME = /color|font|background|border|shadow|opacity/i;
+      for (const k of Object.keys(dk).filter((x) => THEME.test(x))) {
+        delete dk[k];
+        changes.push(`-${k}`);
+      }
+    }
+    if (changes.length) inj.get('wrapperSaveService').save([comp]);
+    return { ok: true, changes };
+  } catch (e: any) {
+    return { ok: false, changes, error: String(e && e.message) };
   }
 }
 

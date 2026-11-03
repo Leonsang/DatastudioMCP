@@ -7,7 +7,7 @@
     {
       "page": "active",
       "components": [
-        { "key": "periodo", "type": "simple-daterangepicker", "x": 880, "y": 20, "w": 280, "h": 60 },
+        { "key": "periodo", "type": "simple-daterangepicker", "x": 880, "y": 20, "w": 280, "h": 60, "dateRangeDays": 1100, "stripStyles": true },
         {
           "row": { "y": 100, "h": 120, "margin": 20, "gap": 20 },
           "items": [
@@ -17,11 +17,11 @@
             { "key": "kpi_valoracion", "type": "kpi-metric", "id": "cd-5rjt8lxy8d", "metrics": ["AVG(valoracion)"] }
           ]
         },
-        { "key": "tendencia", "type": "simple-linechart", "x": 20, "y": 240, "w": 740, "h": 300,
+        { "key": "tendencia", "type": "simple-linechart", "stripStyles": true, "x": 20, "y": 240, "w": 740, "h": 300,
           "dimensions": ["fecha"], "metrics": ["SUM(ingresos)"] },
-        { "key": "canal", "type": "simple-piechart", "x": 780, "y": 240, "w": 380, "h": 300,
+        { "key": "canal", "type": "simple-piechart", "stripStyles": true, "x": 780, "y": 240, "w": 380, "h": 300,
           "dimensions": ["canal"], "metrics": ["SUM(ingresos)"] },
-        { "key": "mapa", "type": "simple-geomap", "x": 20, "y": 560, "w": 560, "h": 320,
+        { "key": "mapa", "type": "simple-geomap", "stripStyles": true, "x": 20, "y": 560, "w": 560, "h": 320,
           "dimensions": ["codigo_pais"], "metrics": ["SUM(ingresos)"] },
         { "key": "tabla_pais", "type": "simple-table", "id": "cd-j2uffxuy8d", "x": 600, "y": 560, "w": 560, "h": 320,
           "dimensions": ["pais"], "metrics": ["SUM(ingresos)", "AVG(valoracion)", "SUM(unidades)"] }

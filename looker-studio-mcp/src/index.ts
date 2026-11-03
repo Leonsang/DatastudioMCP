@@ -20,6 +20,7 @@ import {
   exportReport,
   lintSpec,
   openReport,
+  patchComponent,
   reloadReport,
 } from './ops.js';
 import { loadSpec, type ReportSpec } from './spec.js';
@@ -310,6 +311,30 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   },
   async ({ componentId }) => run(() => deleteComponent(componentId)),
+);
+
+server.registerTool(
+  'patch_component',
+  {
+    title: 'Ajustar control / estilos',
+    description:
+      'dateRangeDays: periodo por defecto de un control de fechas (ultimos N dias, movil). stripThemeStyles: quita colores/fuentes/bordes ' +
+      'sobrescritos en el componente para que mande el tema del informe (util tras crear desde plantillas de otros informes).',
+    inputSchema: {
+      componentId: z.string().min(1),
+      dateRangeDays: z.number().int().positive().optional(),
+      stripThemeStyles: z.boolean().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async (args) =>
+    run(() =>
+      patchComponent({
+        componentId: args.componentId,
+        ...(args.dateRangeDays !== undefined ? { dateRangeDays: args.dateRangeDays } : {}),
+        ...(args.stripThemeStyles ? { stripThemeStyles: true } : {}),
+      }),
+    ),
 );
 
 const SpecInput = {

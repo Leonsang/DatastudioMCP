@@ -194,13 +194,17 @@ Mecanismo interno (detalle en `skills/LOOKER_STUDIO_INTERNALS.md`): `angular.ele
 
 ## Estado de verificación (2026-11-03)
 
-En `/preview` (informe de ejemplo Firebase) y en `/edit` (informe nuevo propio `MCP Test - World Population`):
-
-- ✅ `attach_to_report`, `get_report_layout`, `inspect_data_sources`, `diagnose_report`: probados en vivo.
-- ✅ `set_component_box_model`: posición, tamaño y padding aplicados y **conservados tras recargar** en `/edit`.
-- ✅ `bind_fields_to_component`: dimensiones y métricas (por nombre visible, id o `t0.id`) **conservadas tras recargar** en `/edit`, incluso tras cambiar el origen del gráfico.
-- ✅ `diagnose_report` devuelve el texto real del error (`reason`, título y detalle) y detecta `CUSTOM_AGGREGATION`.
-- ⚠️ Los orígenes `[Sample]` de Data Studio (World Population, Rio Olympics, UA) fallan hoy en informes nuevos por causas del propio origen (reason 13/93). Para ver datos reales, usa un Sheet propio o BigQuery.
+**Por CDP con el CLI**, sin Claude in Chrome, en un informe propio en `/edit` con un origen de Google Sheets:
+- ✅ `open`: unos 3,5 s.
+- ✅ `templates capture` desde el informe de ejemplo de Firebase en `/preview`: 11 tipos en 0,3 s.
+- ✅ `apply examples/resumen.spec.json`:
+  - crea el selector de periodo, la serie temporal, el circular y el mapa desde plantillas;
+  - actualiza los 4 KPIs y la tabla;
+  - recarga y diagnostica: **0 problemas**;
+  - tarda unos 40 s, la mayor parte esperas de guardado.
+- ✅ `delete` y `patch` (periodo por defecto y quitar estilos de tema).
+- ✅ `diagnose` aprende los reason codes 13, 93, 266 y 268 y devuelve `fix`.
+- ✅ Las herramientas originales: layout, box model, sources, bind (persistencia comprobada recargando), diagnose y config.
 
 ## Limitaciones
 

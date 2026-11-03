@@ -31,6 +31,10 @@ export interface SpecComponent {
   dataset?: string;
   dimensions?: string[];
   metrics?: string[];
+  /** Date-range controls: default range = last N days (rolling). */
+  dateRangeDays?: number;
+  /** Remove per-component theme overrides (colors/fonts/borders). */
+  stripStyles?: boolean;
 }
 
 export interface SpecRow {
@@ -58,6 +62,8 @@ export interface ResolvedComponent extends Required<Pick<SpecComponent, 'key' | 
   dimensions: string[];
   metrics: string[];
   page: string;
+  dateRangeDays?: number;
+  stripStyles?: boolean;
 }
 
 export interface LintIssue {
@@ -106,6 +112,8 @@ export function resolveSpec(spec: ReportSpec): ResolvedComponent[] {
             key: it.key, type: it.type, id: it.id, x: x0 + i * (w + gap), y, w, h,
             padding: it.padding ?? spec.defaults?.padding, dataset: it.dataset ?? spec.defaults?.dataset,
             dimensions: it.dimensions ?? [], metrics: it.metrics ?? [], page,
+            ...(it.dateRangeDays !== undefined ? { dateRangeDays: it.dateRangeDays } : {}),
+            ...(it.stripStyles ? { stripStyles: true } : {}),
           });
         });
       } else {
@@ -113,6 +121,8 @@ export function resolveSpec(spec: ReportSpec): ResolvedComponent[] {
           key: c.key, type: c.type, id: c.id, x: c.x ?? 0, y: c.y ?? 0, w: c.w ?? 400, h: c.h ?? 300,
           padding: c.padding ?? spec.defaults?.padding, dataset: c.dataset ?? spec.defaults?.dataset,
           dimensions: c.dimensions ?? [], metrics: c.metrics ?? [], page,
+          ...(c.dateRangeDays !== undefined ? { dateRangeDays: c.dateRangeDays } : {}),
+          ...(c.stripStyles ? { stripStyles: true } : {}),
         });
       }
     }
@@ -147,6 +157,8 @@ export function lintSpec(spec: ReportSpec): { issues: LintIssue[]; components: R
       if (c.metrics.length !== 1) push('warning', c.key, 'kpi', 'Un scorecard debe tener exactamente 1 metrica [kpi-scorecards].');
       if (c.h < 100 || c.h > 140) push('info', c.key, 'kpi', `Alto de scorecard ${c.h}px fuera de 100–140 [kpi-scorecards §1].`);
     }
+    if (c.type === 'simple-daterangepicker' && c.dateRangeDays === undefined)
+      push('info', c.key, 'date-range', 'Control de periodo sin dateRangeDays: heredara el periodo por defecto (p. ej. ultimos 28 dias) y puede dejar la pagina sin datos.');
     if (!NON_DATA.has(c.type) && !['filter-bar', 'simple-daterangepicker'].includes(c.type) && !c.dataset)
       push('warning', c.key, 'dataset', 'Sin dataset: se usara el del componente clonado o el del informe.');
   }
