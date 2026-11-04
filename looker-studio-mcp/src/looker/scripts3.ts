@@ -350,3 +350,43 @@ export function fieldConfigsScript(type: string): Array<{ id: string; slot: stri
     return [];
   }
 }
+
+// ---------------------------------------------------------------------------
+// report settings: report.config.attribute (verified 2026-11-03)
+//   viewerFilterBarConfig.orientation  1 = viewer filter bar enabled, 0 = disabled
+//   viewModeNav, viewModeHeader, viewModeScale, viewModeMargin, viewModeMaxWidth,
+//   crossFilterByDefault, snapMode, showNavigationInEditMode, width, height
+// ---------------------------------------------------------------------------
+
+
+export function reportSettingsScript(patch: Record<string, unknown> | null): { ok: boolean; settings: Record<string, unknown>; changed: string[]; error?: string } {
+  const w = window as any;
+  const keys = ['viewModeNav', 'viewModeHeader', 'viewModeScale', 'viewModeMargin', 'viewModeMaxWidth', 'crossFilterByDefault', 'snapMode', 'showNavigationInEditMode', 'showNavigationInEmbeddingMode', 'width', 'height'];
+  try {
+    const inj = w.angular.element(document.body).injector();
+    const report = inj.get('legoUndoRedoService').report;
+    const a = report.config.attribute;
+    const read = () => ({
+      viewerFilterBar: !!(a.viewerFilterBarConfig && a.viewerFilterBarConfig.orientation),
+      ...Object.fromEntries(keys.map((k) => [k, a[k]])),
+    });
+    const changed: string[] = [];
+    if (patch) {
+      for (const [k, v] of Object.entries(patch)) {
+        if (k === 'viewerFilterBar') {
+          a.viewerFilterBarConfig = { ...(a.viewerFilterBarConfig || {}), orientation: v ? 1 : 0 };
+          changed.push(k);
+        } else if (keys.includes(k)) {
+          a[k] = v;
+          changed.push(k);
+        } else {
+          return { ok: false, settings: read(), changed, error: `Ajuste no soportado: ${k}. Validos: viewerFilterBar, ${keys.join(', ')}` };
+        }
+      }
+      if (changed.length) inj.get('wrapperSaveService').save([report]);
+    }
+    return { ok: true, settings: read(), changed };
+  } catch (e: any) {
+    return { ok: false, settings: {}, changed: [], error: String(e && e.message) };
+  }
+}

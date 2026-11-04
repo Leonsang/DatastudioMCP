@@ -1,0 +1,159 @@
+{
+  "grid": 10,
+  "canvasWidth": 1200,
+  "canvasHeight": 900,
+  "defaults": {
+    "dataset": "@ingresos"
+  },
+  "pages": [
+    {
+      "name": "Controles y filtros",
+      "components": [
+        {
+          "key": "c_lista",
+          "type": "dimension-filter",
+          "variant": "lista-desplegable",
+          "x": 20,
+          "y": 20,
+          "w": 280,
+          "h": 60,
+          "dimensions": [
+            "categoria"
+          ],
+          "stripStyles": true
+        },
+        {
+          "key": "c_entrada",
+          "type": "dimension-filter",
+          "variant": "cuadro-de-entrada",
+          "x": 20,
+          "y": 100,
+          "w": 280,
+          "h": 60,
+          "dimensions": [
+            "producto"
+          ],
+          "stripStyles": true
+        },
+        {
+          "key": "c_avanzado",
+          "type": "dimension-filter",
+          "variant": "filtro-avanzado",
+          "x": 20,
+          "y": 180,
+          "w": 280,
+          "h": 60,
+          "dimensions": [
+            "ciudad"
+          ],
+          "stripStyles": true
+        },
+        {
+          "key": "c_deslizante",
+          "type": "dimension-filter",
+          "variant": "control-deslizante",
+          "x": 20,
+          "y": 260,
+          "w": 280,
+          "h": 60,
+          "dimensions": [
+            "dias_entrega"
+          ],
+          "stripStyles": true
+        },
+        {
+          "key": "c_periodo",
+          "type": "simple-daterangepicker",
+          "variant": "filtro-por-periodo",
+          "x": 20,
+          "y": 400,
+          "w": 280,
+          "h": 60,
+          "dateRangeDays": 1100,
+          "stripStyles": true
+        },
+        {
+          "key": "c_boton",
+          "type": "button",
+          "variant": "boton",
+          "x": 20,
+          "y": 540,
+          "w": 280,
+          "h": 40,
+          "stripStyles": true
+        },
+        {
+          "key": "c_datos",
+          "type": "dataset-picker",
+          "variant": "control-de-datos",
+          "x": 20,
+          "y": 600,
+          "w": 280,
+          "h": 60,
+          "stripStyles": true
+        },
+        {
+          "key": "c_fija",
+          "type": "dimension-filter",
+          "variant": "lista-de-tamano-fijo",
+          "x": 20,
+          "y": 680,
+          "w": 280,
+          "h": 200,
+          "dimensions": [
+            "canal"
+          ],
+          "stripStyles": true
+        },
+        {
+          "key": "c_dimensiones",
+          "type": "dimension-control",
+          "variant": "control-de-dimensiones",
+          "x": 320,
+          "y": 20,
+          "w": 400,
+          "h": 60,
+          "dimensions": [
+            "categoria",
+            "canal",
+            "region"
+          ],
+          "stripStyles": true
+        },
+        {
+          "key": "c_barras",
+          "type": "simple-barchart",
+          "x": 320,
+          "y": 100,
+          "w": 840,
+          "h": 360,
+          "dimensions": [
+            "categoria"
+          ],
+          "metrics": [
+            "SUM(ingresos)",
+            "SUM(unidades)"
+          ]
+        },
+        {
+          "key": "c_tabla",
+          "type": "simple-table",
+          "x": 320,
+          "y": 480,
+          "w": 840,
+          "h": 400,
+          "dimensions": [
+            "producto",
+            "ciudad",
+            "canal"
+          ],
+          "metrics": [
+            "SUM(ingresos)",
+            "AVG(dias_entrega)",
+            "AVG(valoracion)"
+          ]
+        }
+      ]
+    }
+  ]
+}

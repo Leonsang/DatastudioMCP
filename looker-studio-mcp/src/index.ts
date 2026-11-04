@@ -25,6 +25,7 @@ import {
   reloadReport,
 } from './ops.js';
 import { loadSpec, type ReportSpec } from './spec.js';
+import { renamePage, reportSettings } from './ops3.js';
 import { addFilter, addPage, applyTheme, listFilters, listPages, readTheme, seedTemplatesFromUi, synthesizeTemplates, themeLibrary, useThemePreset, uxAudit } from './ops3.js';
 
 const server = new McpServer(
@@ -46,7 +47,7 @@ const server = new McpServer(
 
 const WRITE_TOOLS = new Set([
   'set_component_box_model', 'bind_fields_to_component', 'create_component', 'apply_report_spec', 'patch_component',
-  'apply_theme', 'use_theme', 'add_page', 'synthesize_templates', 'seed_templates_from_menu', 'add_filter',
+  'apply_theme', 'use_theme', 'add_page', 'rename_page', 'synthesize_templates', 'seed_templates_from_menu', 'add_filter',
 ]);
 const DESTRUCTIVE_TOOLS = new Set(['delete_component']);
 {
@@ -487,6 +488,30 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
   },
   async ({ labels }) => run(() => seedTemplatesFromUi(labels)),
+);
+
+server.registerTool(
+  'rename_page',
+  {
+    title: 'Renombrar pagina',
+    description: 'Renombra una pagina en el modelo y en la navegacion visible (Gestionar paginas > Cambiar nombre -> /updateReportNavigationInfo).',
+    inputSchema: { pageId: z.string().min(1), name: z.string().min(1).max(100) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ pageId, name }) => run(() => renamePage(pageId, name)),
+);
+
+server.registerTool(
+  'report_settings',
+  {
+    title: 'Ajustes del informe',
+    description:
+      'Lee o cambia ajustes del informe: viewerFilterBar (barra de filtros de lectores), crossFilterByDefault, viewModeNav, ' +
+      'viewModeHeader, viewModeScale, viewModeMargin, viewModeMaxWidth, snapMode, showNavigationInEditMode, width, height. Sin patch solo lee.',
+    inputSchema: { patch: z.record(z.string(), z.unknown()).optional() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ patch }) => run(async () => { if (patch && Object.keys(patch).length) assertWrite('report_settings'); return reportSettings(patch); }),
 );
 
 const SpecInput = {

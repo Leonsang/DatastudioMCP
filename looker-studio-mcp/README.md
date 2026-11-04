@@ -234,6 +234,35 @@ La biblioteca `themes/library/` incluye `marca-azul`, `oscuro-accesible`, `alto-
 
 `examples/paginas-2-3.spec.json` construye dos páginas completas con 14 componentes, dos filtros de página y el tema de marca.
 
+### Controles (menú "Añadir un control")
+
+`templates seed-ui "control:<opción>"` captura cada control. Todos verificados en la página 4 de `examples/pagina-4-controles.spec.json`:
+
+| Opción del menú | Tipo / variante | Estado |
+|---|---|---|
+| Lista desplegable | `dimension-filter@lista-desplegable` | ✅ |
+| Lista de tamaño fijo | `dimension-filter@lista-de-tamano-fijo` | ✅ |
+| Cuadro de entrada | `dimension-filter@cuadro-de-entrada` | ✅ |
+| Filtro avanzado | `dimension-filter@filtro-avanzado` | ✅ |
+| Control deslizante | `dimension-filter@control-deslizante` | ✅ (campo numérico) |
+| Casilla | `dimension-filter@casilla` | ⚠️ Necesita un campo **Booleano** (reason 116). En Sheets, TRUE/FALSE se infiere como texto: hay que cambiar el tipo en el origen |
+| Filtro predefinido | `button@filtro-predefinido` (preset `button-filter`) | ⚠️ Falta descubrir dónde guarda su condición (reason 265) |
+| Filtro por periodo | `simple-daterangepicker@filtro-por-periodo` + `dateRangeDays` | ✅ |
+| Control de datos | `dataset-picker@control-de-datos` | ✅ Se crea, pero solo tiene sentido con conectores como GA o Ads, no con Sheets |
+| Control de dimensiones | `dimension-control@control-de-dimensiones` | ✅ |
+| Botón | `button@boton` | ✅ |
+| Añadir barra de filtros de lectores | ajuste del informe `viewerFilterBarConfig.orientation` | ✅ `report settings --viewer-filter-bar on` |
+
+### Ajustes del informe y mantenimiento
+
+```bash
+node dist/cli.js report settings                                   # leer
+node dist/cli.js report settings --viewer-filter-bar on --cross-filter on
+node dist/cli.js report settings --set viewModeNav=nav-top,viewModeScale=scale-fit
+node dist/cli.js pages rename <pageId> "Nombre"                    # modelo + nombre visible en la navegacion
+node dist/cli.js orphans examples/*.spec.json                      # componentes que ningun spec referencia
+```
+
 ## Inspiración de los MCP de Microsoft
 
 - [`powerbi-modeling-mcp`](https://github.com/microsoft/powerbi-modeling-mcp):
@@ -277,6 +306,5 @@ Mecanismo interno (detalle en `skills/LOOKER_STUDIO_INTERNALS.md`): `angular.ele
 - Interfaz no oficial: una actualización de Looker Studio/Data Studio puede romperla. Si `legoUndoRedoService` desaparece, las herramientas de lectura usan el DOM como alternativa.
 - Crear componentes requiere una plantilla del tipo: se obtiene clonando uno del informe, con `templates capture`, `seed-ui` (menú del editor) o `synth`.
 - Combinar orígenes (blends) y campos calculados aún no están automatizados.
-- Los nombres de página en el modo vista pueden tardar en reflejar un renombrado.
 - `paddingBottom` no existe en algunos tipos (p. ej. `kpi-metric`), y `generic-shape` no tiene padding: la herramienta lo avisa en `warnings`.
 - Usa un perfil de navegador dedicado. El puerto CDP da control total sobre ese navegador a cualquier proceso local.

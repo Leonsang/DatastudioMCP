@@ -10,6 +10,7 @@ import { bindFieldsScript, diagnoseReportScript, readComponentConfigScript, read
 import { deleteComponentScript } from './looker/scripts2.js';
 import {
   addFilterScript,
+  reportSettingsScript,
   addPageScript,
   attachFilterScript,
   listFiltersScript,
@@ -166,6 +167,117 @@ export async function detachFilter(filterId: string, target: string) {
   return a;
 }
 
+// ---- report settings ------------------------------------------------------------------
+
+export async function reportSettings(patch?: Record<string, unknown>) {
+  if (!patch || !Object.keys(patch).length) return evaluateOn(await getReportPage(), T, reportSettingsScript, null);
+  const { page } = await requireEditMode();
+  const w = watchSaves(page);
+  const r = await evaluateOn(page, T, reportSettingsScript, patch);
+  await sleep(2500);
+  w.stop();
+  if (!r.ok) throw new Error(r.error);
+  if (w.statuses.some((s) => s >= 400)) throw new Error(`Guardado rechazado (${w.statuses.join(',')}).`);
+  return { ...r, saves: w.statuses };
+}
+
+
+// ---- page display names (navigation) ------------------------------------------------
+// The viewer navigation reads store.reportNavigation.navigationInfo.navItems[].page.displayName,
+// saved by POST /updateReportNavigationInfo (verified 2026-11-03). The stable way found to change
+// it is the editor's own "Gestionar paginas > Cambiar nombre" flow, driven with real input events.
+
+function navNames(): string[] {
+  let s: any;
+  (window as any).angular.element(document.body).injector().get('store').subscribe((x: any) => (s = x)).unsubscribe();
+  return s.reportNavigation.navigationInfo.navItems.map((n: any) => (n.page && n.page.displayName) || '');
+}
+
+async function openManagePages(page: Page): Promise<void> {
+  const open = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('*')).some((e) => e.children.length === 0 && /P[aá]ginas del informe|Report pages/.test(((e as HTMLElement).innerText || '').trim())));
+  if (open) return;
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('button')).find((x) => /^(P[aá]gina|Page)$/.test(((x as HTMLElement).innerText || '').trim()));
+    if (b) (b as HTMLElement).click();
+  });
+  await sleep(800);
+  await page.evaluate(() => {
+    const panes = Array.from(document.querySelectorAll('.cdk-overlay-pane'));
+    const pane = panes[panes.length - 1];
+    const it = pane && Array.from(pane.querySelectorAll('button,[role=menuitem]')).find((e) => /Gestionar p[aá]ginas|Manage pages/.test((e as HTMLElement).innerText));
+    if (it) (it as HTMLElement).click();
+  });
+  await sleep(1200);
+}
+
+export async function renamePageUi(index: number, name: string): Promise<{ ok: boolean; displayNames: string[]; saves: number[] }> {
+  const { page } = await requireEditMode();
+  await page.bringToFront();
+  await page.setViewport({ width: 1900, height: 1100 });
+  await sleep(800);
+  const statuses: number[] = [];
+  const onResp = (r: { url(): string; status(): number }) => {
+    if (/updateReportNavigationInfo/.test(r.url())) statuses.push(r.status());
+  };
+  page.on('response', onResp);
+  try {
+    await openManagePages(page);
+    const names = (await page.evaluate(navNames)) as string[];
+    if (names[index] === undefined) throw new Error(`No hay pagina en la posicion ${index}.`);
+    if (names[index] === name) return { ok: true, displayNames: names, saves: [] };
+    const rows = await page.evaluate((list: string[]) =>
+      Array.from(document.querySelectorAll('*'))
+        .filter((e) => e.children.length === 0 && list.includes(((e as HTMLElement).innerText || '').trim()))
+        .map((e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })
+        .filter((b) => b.x > window.innerWidth * 0.6 && b.y > 250)
+        .sort((a, b) => a.y - b.y), names);
+    const row = rows[index];
+    if (!row) throw new Error('Fila de la pagina no encontrada en "Paginas del informe".');
+    await page.mouse.move(row.x, row.y);
+    await sleep(500);
+    const more = await page.evaluate((y: number) =>
+      Array.from(document.querySelectorAll('button,[role=button]'))
+        .map((b) => { const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, t: ((b as HTMLElement).innerText || '').trim() }; })
+        .filter((b) => Math.abs(b.y - y) < 12 && !b.t && b.x > window.innerWidth * 0.6)
+        .sort((a, b) => b.x - a.x)[0] || null, row.y);
+    if (!more) throw new Error('Menu de la fila no encontrado.');
+    await page.mouse.click(more.x, more.y);
+    await sleep(700);
+    const mi = await page.evaluate(() => {
+      const panes = Array.from(document.querySelectorAll('.cdk-overlay-pane'));
+      const it = Array.from(panes[panes.length - 1].querySelectorAll('button,[role=menuitem]')).find((e) => /Cambiar nombre|Rename/.test((e as HTMLElement).innerText));
+      if (!it) return null;
+      const r = it.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    if (!mi) throw new Error('Opcion "Cambiar nombre" no encontrada.');
+    await page.mouse.click(mi.x, mi.y);
+    await sleep(800);
+    const input = await page.evaluate((y: number) =>
+      Array.from(document.querySelectorAll('input'))
+        .map((e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })
+        .find((b) => Math.abs(b.y - y) < 16) || null, row.y);
+    if (!input) throw new Error('Campo de nombre no encontrado.');
+    await page.mouse.click(input.x, input.y);
+    await page.keyboard.down('Control');
+    await page.keyboard.press('KeyA');
+    await page.keyboard.up('Control');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type(name);
+    await page.keyboard.press('Enter');
+    for (let i = 0; i < 20 && !statuses.length; i++) await sleep(250);
+    const after = (await page.evaluate(navNames)) as string[];
+    if (after[index] !== name) throw new Error(`El nombre visible quedo como "${after[index]}".`);
+    learn('note', 'rename_page_ui', { text: 'Gestionar paginas > Cambiar nombre -> POST /updateReportNavigationInfo' });
+    return { ok: true, displayNames: after, saves: [...statuses] };
+  } finally {
+    page.off('response', onResp);
+    await page.keyboard.press('Escape').catch(() => undefined);
+    await page.setViewport(null as never).catch(() => undefined);
+  }
+}
+
 // ---- pages ---------------------------------------------------------------------
 
 export async function listPages() {
@@ -217,6 +329,8 @@ export async function addPage(name: string) {
   await sleep(2000);
   w.stop();
   if (!rn.ok) throw new Error(rn.error);
+  await renamePageUi(pages.length - 1, name).catch((e) =>
+    learn('note', 'rename_page_ui_failed', { text: String((e as Error).message).slice(0, 200) }));
   learn('create_ok', 'page', { source: 'toolbar+rename' });
   return { ok: true, pageId: created.id, name, url: page.url(), saves: w.statuses };
 }
@@ -226,7 +340,10 @@ export async function renamePage(pageId: string, name: string) {
   const r = await evaluateOn(page, T, renamePageScript, { pageId, name });
   if (!r.ok) throw new Error(r.error);
   await sleep(1500);
-  return r;
+  // model name (above) + the visible navigation name (viewer nav / "Paginas del informe")
+  const idx = (await evaluateOn(page, T, listPagesScript)).findIndex((p) => p.id === pageId);
+  const nav = idx >= 0 ? await renamePageUi(idx, name) : null;
+  return { ...r, navigation: nav?.displayNames };
 }
 
 // ---- template synthesis ------------------------------------------------------------
@@ -347,17 +464,27 @@ export async function seedTemplatesFromUi(labels: string[]) {
     for (const label of labels) {
       const before = new Set<string>(await page.evaluate(() =>
         (window as any).angular.element(document.body).injector().get('legoUndoRedoService').report.pages.flatMap((p: any) => p.components.map((c: any) => c.getId()))));
-      const opened = await page.evaluate(() => {
-        const b = document.querySelector('button[aria-label="Añadir un gráfico"], button[aria-label="Add a chart"]') as HTMLElement | null;
+      // "control:<texto>" -> menu "Anadir un control" (items are buttons matched by text);
+      // otherwise -> menu "Anadir un grafico" (PRESET-PREVIEW matched by aria-label).
+      const isControl = label.startsWith('control:');
+      const item = isControl ? label.slice(8) : label;
+      const opened = await page.evaluate((ctl) => {
+        const sel = ctl
+          ? 'button[aria-label="Añadir un control"], button[aria-label="Add a control"]'
+          : 'button[aria-label="Añadir un gráfico"], button[aria-label="Add a chart"]';
+        const b = document.querySelector(sel) as HTMLElement | null;
         if (b) b.click();
         return !!b;
-      });
+      }, isControl);
       await sleep(900);
-      const picked = opened && (await page.evaluate((l) => {
-        const el = Array.from(document.querySelectorAll('preset-preview,[role=menuitem]')).find((e) => e.getAttribute('aria-label') === l) as HTMLElement | undefined;
+      const picked = opened && (await page.evaluate((l, ctl) => {
+        const panes = Array.from(document.querySelectorAll('.cdk-overlay-pane'));
+        const pane = panes[panes.length - 1] || document;
+        const cands = Array.from(pane.querySelectorAll(ctl ? 'button,[role=menuitem]' : 'preset-preview,[role=menuitem]'));
+        const el = cands.find((e) => (ctl ? ((e as HTMLElement).innerText || '').replace(/\s+/g, ' ').trim() === l : e.getAttribute('aria-label') === l)) as HTMLElement | undefined;
         if (el) el.click();
         return !!el;
-      }, label));
+      }, item, isControl));
       if (!picked) {
         await page.keyboard.press('Escape');
         results.push({ label, ok: false, error: opened ? 'opcion no encontrada en el menu' : 'boton "Anadir un grafico" no encontrado' });
@@ -383,12 +510,14 @@ export async function seedTemplatesFromUi(labels: string[]) {
         return c ? { id: String(c.getId()), type: String(c.config.config.display.type), config: JSON.parse(JSON.stringify(c.config)) } : null;
       }, [...before]);
       if (!added) {
-        results.push({ label, ok: false, error: 'no se creo ningun componente' });
+        // Some options do not add a canvas component (e.g. the report-level viewer filter bar).
+        await page.keyboard.press('Escape').catch(() => undefined);
+        results.push({ label, ok: false, error: 'no se creo ningun componente en el lienzo (puede ser un elemento de informe)' });
         continue;
       }
-      const slug = label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      saveTemplate(added.type, added.config, { source: 'insert-menu', label });
-      saveTemplate(`${added.type}@${slug}`, added.config, { source: 'insert-menu', label });
+      const slug = item.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      saveTemplate(added.type, added.config, { source: isControl ? 'control-menu' : 'insert-menu', label: item });
+      saveTemplate(`${added.type}@${slug}`, added.config, { source: isControl ? 'control-menu' : 'insert-menu', label: item });
       learn('create_ok', added.type, { source: 'insert-menu' });
       await evaluateOn(page, T, deleteComponentScript, added.id);
       await sleep(1500);

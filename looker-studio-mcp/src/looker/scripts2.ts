@@ -303,9 +303,17 @@ export function patchComponentScript(args: { componentId: string; dateRangeDays?
     const comp = all.find((c: any) => c.getId() === args.componentId);
     if (!comp) return { ok: false, changes, error: `Componente ${args.componentId} no encontrado.` };
     if (args.dateRangeDays !== undefined) {
-      const acts = (comp.config.behavior && comp.config.behavior.onSelect) || [];
-      const act = acts.find((a: any) => a.action === 'lego-change-date-range');
-      if (!act) return { ok: false, changes, error: 'El componente no es un control de periodo (sin lego-change-date-range).' };
+      if (comp.config.config.display.type !== 'simple-daterangepicker')
+        return { ok: false, changes, error: 'dateRangeDays solo aplica a controles de periodo (simple-daterangepicker).' };
+      // Date controls inserted from the menu may not carry the behavior yet: create it.
+      comp.config.behavior = comp.config.behavior || {};
+      const acts = (comp.config.behavior.onSelect = comp.config.behavior.onSelect || []);
+      let act = acts.find((a: any) => a.action === 'lego-change-date-range');
+      if (!act) {
+        act = { action: 'lego-change-date-range', isControl: true, init: {} };
+        acts.push(act);
+        changes.push('+behavior lego-change-date-range');
+      }
       act.init = act.init || {};
       act.init.dateRange = { startOffsetUnit: 3, startOffset: Math.round(args.dateRangeDays), endOffsetUnit: 3, endOffset: 1 };
       act.init.updateFrequency = 'Rolling';

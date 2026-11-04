@@ -24,6 +24,7 @@ import {
   patchComponent,
   reloadReport,
 } from './ops.js';
+import { reportSettings } from './ops3.js';
 import { addFilter, addPage, applyTheme, detachFilter, exportTheme, importTheme, listFilters, listPages, readTheme, renamePage, seedTemplatesFromUi, synthesizeTemplates, themeLibrary, useThemePreset, uxAudit } from './ops3.js';
 import { readFileSync, existsSync } from 'node:fs';
 
@@ -52,6 +53,7 @@ Escritura (modo /edit)
 Paginas y tema
   pages [list] | pages add <nombre> | pages rename <id> <nombre>
   theme presets | theme use <preset|nombre|biblioteca> | theme export <f.json> | theme import <f.json>
+  report settings [--viewer-filter-bar on|off] [--cross-filter on|off] [--set clave=valor,...]
   filters [list] | filters add --name N --field F [--op EQ] [--values a,b] [--exclude] [--to <pageId|cd-..>]
   filters detach <filterId> <pageId|cd-..>
   theme [get] | theme set <json|archivo.json>    Tema: font,text,fill,accent,accentText,background,grid,
@@ -59,6 +61,7 @@ Paginas y tema
   ux                               Auditoria UX: contraste WCAG, tema, paleta, tipografia, layout (0-100)
 
 Informe como codigo
+  orphans <spec.json...>           Componentes que ningun spec referencia (restos, anadidos a mano)
   lint <spec.json>                 Valida contra las skills (reticula, lienzo, KPIs, densidad)
   apply <spec.json> [--dry-run]    Crea/actualiza (idempotente via <spec>.state.json)
 
@@ -176,6 +179,30 @@ async function main(): Promise<unknown> {
       if (pos[0] === 'add') return addPage(need(pos[1], 'el nombre de la pagina'));
       if (pos[0] === 'rename') return renamePage(need(pos[1], 'pageId'), need(pos.slice(2).join(' '), 'el nombre'));
       return listPages();
+    case 'orphans': {
+      // components on the report that no spec state file references (leftovers, manual additions)
+      const known = new Set<string>();
+      for (const f of pos) {
+        const st = f.replace(/\.json$/i, '') + '.state.json';
+        if (existsSync(st)) for (const id of Object.values((JSON.parse(readFileSync(st, 'utf8')) as { keys: Record<string, string> }).keys)) known.add(id);
+      }
+      const ex = await exportReport();
+      return ex.pages.flatMap((p) =>
+        (p.components as Array<{ id: string; attribute: { left: number; top: number; width: number; height: number }; config: { display: { type: string } } }>)
+          .filter((c) => !known.has(c.id))
+          .map((c) => ({ page: p.name || p.id, id: c.id, type: c.config.display.type, box: [c.attribute.left, c.attribute.top, c.attribute.width, c.attribute.height] })),
+      );
+    }
+    case 'report': {
+      // report settings [--viewer-filter-bar on|off] [--nav left|top|...] [--cross-filter on|off] [--key value]
+      if (pos[0] !== 'settings') throw new Error('Uso: report settings [--viewer-filter-bar on|off] [--cross-filter on|off] [--set clave=valor ...]');
+      const patch: Record<string, unknown> = {};
+      const bool = (v: string | true) => v === true || /^(on|true|1|si|yes)$/i.test(String(v));
+      if (flags['viewer-filter-bar'] !== undefined) patch.viewerFilterBar = bool(flags['viewer-filter-bar']);
+      if (flags['cross-filter'] !== undefined) patch.crossFilterByDefault = bool(flags['cross-filter']);
+      if (typeof flags.set === 'string') for (const kv of flags.set.split(',')) { const [k, v] = kv.split('='); if (k) patch[k] = v === undefined ? true : /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : /^(true|false)$/.test(v) ? v === 'true' : v; }
+      return reportSettings(patch);
+    }
     case 'filters': {
       if (pos[0] === 'add') {
         const vals = list(flags.values).map((v) => (v !== '' && !Number.isNaN(Number(v)) && typeof flags.numeric !== 'undefined' ? Number(v) : v));

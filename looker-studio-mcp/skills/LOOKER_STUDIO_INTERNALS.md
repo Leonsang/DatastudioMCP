@@ -164,6 +164,15 @@ Cada nodo es un objeto con claves `seccion::clave`:
   - emular foco y ciclo de vida activo;
   - filtrar targets por URL antes de `target.page()`, porque las pestañas ocultas o los iframes de sandbox pueden colgar `Network.enable`;
   - guardados seguidos de la misma página pueden perder alguno.
+- **Nombres visibles de página:**
+  - la navegación lee `store.reportNavigation.navigationInfo.navItems[].page.displayName`, que se guarda con `POST /updateReportNavigationInfo`, no con `updatePage`;
+  - forma estable de cambiarlos: Gestionar páginas → menú de la fila → Cambiar nombre, con eventos reales.
+- **Barra de filtros de lectores:** `report.config.attribute.viewerFilterBarConfig.orientation` (1 activa, 0 no) y guardar `[report]`. En `report.config.attribute` están también `viewModeNav`, `viewModeHeader`, `viewModeScale`, `viewModeMargin`, `viewModeMaxWidth`, `crossFilterByDefault`, `snapMode`, `showNavigationInEditMode`, `width` y `height`.
+- **Controles:**
+  - casi todos los del menú son `dimension-filter` con distinto preset (lista desplegable, tamaño fijo, cuadro de entrada, filtro avanzado, control deslizante, casilla);
+  - el "Filtro predefinido" es `button` con preset `button-filter`;
+  - el resto: `dataset-picker` (control de datos), `dimension-control` (control de dimensiones) y `simple-daterangepicker` (filtro por periodo; si viene del menú puede no traer `behavior`);
+  - reason 116 = casilla con un campo no booleano; reason 265 = configuración incompleta.
 - **Códigos de `dataTransformation.aggregation`** (verificados con valores conocidos el 2026-11-03): `0` NONE, `1` AVG, `2` COUNT, `3` COUNT_DISTINCT, `4` MAX, `5` MIN, `6` SUM.
 - **Orígenes de Sheets/CSV:** todas las columnas llegan como dimensiones (`type 0`, `defaultAggregation 0`), incluidos los números. Para usarlas como métrica hay que fijar `aggregation` (SUM para números, COUNT_DISTINCT para texto). Sin ella, la consulta devuelve filas sin agregar. `bind_fields_to_component` lo hace por defecto y acepta `SUM(campo)`, `AVG(campo)`, etc.
 - `comp.getError()` → `{reason, title, description, errorTextInfo.errorDialogText}`: texto útil para diagnosticar (reason 13 = sin acceso al conjunto de datos subyacente; 93 = configuración del origen).
