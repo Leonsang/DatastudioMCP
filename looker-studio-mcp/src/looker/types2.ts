@@ -56,6 +56,8 @@ export interface CreateComponentArgs {
   template?: unknown;
   /** Do not save yet (the caller will bind fields, which saves). */
   deferSave?: boolean;
+  /** Use the template even if the report has a component of the same type (variants). */
+  preferTemplate?: boolean;
 }
 
 export interface CreateComponentResult {

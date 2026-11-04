@@ -138,6 +138,41 @@ Cada nodo es un objeto con claves `seccion::clave`:
 - **Borrar:** `page.removeComponent(comp)` y después `wrapperSaveService.save([page])` ✅. También existen `removeComponents`, `removeComponentByIndex` y `removeGroups`.
 - **Pestañas ocultas:** si navegas a un informe con la pestaña oculta, el editor no arranca y acaba en la portada. Hay que llamar a `bringToFront()` antes de `goto`.
 - **Red:** el editor no siempre usa el `XMLHttpRequest` del prototipo. Para ver el estado de `updatePage`, escucha `page.on('response')` desde CDP.
+- **Temas:**
+  - un tema propio vive en `report.config.resource.theme[] = {id, content}`;
+  - se crea con `report.addResource('theme', content)` o se actualiza con `updateResourceById('theme', id, content)`;
+  - se activa con `report.setDisplayKeyValue('themeConfig', id)` y se guarda con `wrapperSaveService.save([report])` → `updateReport` 200;
+  - presets incluidos en el código del editor: t-default-modern, t-default, t-edge, t-constellation, t-groovy, t-insight, t-ocean, t-harvest, t-eucalyptus, t-pop, t-fog, t-lagoon, t-executive, t-woodsy, t-royalty, t-sienna, t-material, t-muted, t-primary, t-cut-out, t-shift, t-energetic, t-forest, t-magazine, t-tunnel, t-quartz, t-onyx.
+- **Páginas:**
+  - `report.addPage(cfg)` no persiste: `updatePage` responde 500 para una página que el servidor no conoce;
+  - la interfaz llama a `POST /createPages` y la página nueva recibe un id `p_…` igual al de su URL;
+  - para renombrar, `page.setAttributeValues({name})` y guardar `[page]` y `[report]`;
+  - la página activa sale de `/page/<id>` en la URL, porque `report.selected` no sigue la navegación.
+- **Filtros:**
+  - se definen en `report.config.resource.filter[id] = {name, datasourceId, filterDefinition.filterExpression:{include, conceptType:0, concept:{ns,name}, filterConditionType, stringValues, numberValues, queryTimeTransformation.dataTransformation.sourceFieldName}, version:3}`;
+  - páginas y componentes los referencian en `datasource.keys.filters.value = [id]`.
+- **Huecos de campos por tipo:** `getDisplayTypeObj(type).getDataFieldConfigs()` devuelve `[{id, type:1 dim|2 met, options:{conceptKey, min, max, defaultFieldCount}}]`. Ejemplos:
+  - dispersión: `x_metric`, `y_metric`, `bubble_size`;
+  - sankey: métricas en `sankey_weight`;
+  - área: `breakdown`, que no se puede vaciar, solo reemplazar;
+  - indicador y viñetas: sin dimensiones (crear un hueco vacío de dimensiones provoca 400).
+- **Esquemas sin cargar:** el esquema de un origen que ningún componente usa sale vacío. Se carga añadiendo un componente temporal que nunca se guarda, forzando la consulta y quitándolo.
+- **Ids de campo en Sheets:** salen de un hash del nombre de la columna (`fecha` = `_97306493_` en cualquier hoja).
+- **Menú de inserción:** cada opción es `PRESET-PREVIEW[aria-label]`; tras pulsarla, un clic real en `.ng2-canvas-container` coloca el componente.
+- **CDP:**
+  - no esperar con `setTimeout` dentro de la página: con la pestaña en segundo plano los temporizadores se estrangulan;
+  - emular foco y ciclo de vida activo;
+  - filtrar targets por URL antes de `target.page()`, porque las pestañas ocultas o los iframes de sandbox pueden colgar `Network.enable`;
+  - guardados seguidos de la misma página pueden perder alguno.
+- **Nombres visibles de página:**
+  - la navegación lee `store.reportNavigation.navigationInfo.navItems[].page.displayName`, que se guarda con `POST /updateReportNavigationInfo`, no con `updatePage`;
+  - forma estable de cambiarlos: Gestionar páginas → menú de la fila → Cambiar nombre, con eventos reales.
+- **Barra de filtros de lectores:** `report.config.attribute.viewerFilterBarConfig.orientation` (1 activa, 0 no) y guardar `[report]`. En `report.config.attribute` están también `viewModeNav`, `viewModeHeader`, `viewModeScale`, `viewModeMargin`, `viewModeMaxWidth`, `crossFilterByDefault`, `snapMode`, `showNavigationInEditMode`, `width` y `height`.
+- **Controles:**
+  - casi todos los del menú son `dimension-filter` con distinto preset (lista desplegable, tamaño fijo, cuadro de entrada, filtro avanzado, control deslizante, casilla);
+  - el "Filtro predefinido" es `button` con preset `button-filter`;
+  - el resto: `dataset-picker` (control de datos), `dimension-control` (control de dimensiones) y `simple-daterangepicker` (filtro por periodo; si viene del menú puede no traer `behavior`);
+  - reason 116 = casilla con un campo no booleano; reason 265 = configuración incompleta.
 - **Códigos de `dataTransformation.aggregation`** (verificados con valores conocidos el 2026-11-03): `0` NONE, `1` AVG, `2` COUNT, `3` COUNT_DISTINCT, `4` MAX, `5` MIN, `6` SUM.
 - **Orígenes de Sheets/CSV:** todas las columnas llegan como dimensiones (`type 0`, `defaultAggregation 0`), incluidos los números. Para usarlas como métrica hay que fijar `aggregation` (SUM para números, COUNT_DISTINCT para texto). Sin ella, la consulta devuelve filas sin agregar. `bind_fields_to_component` lo hace por defecto y acepta `SUM(campo)`, `AVG(campo)`, etc.
 - `comp.getError()` → `{reason, title, description, errorTextInfo.errorDialogText}`: texto útil para diagnosticar (reason 13 = sin acceso al conjunto de datos subyacente; 93 = configuración del origen).

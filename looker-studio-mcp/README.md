@@ -177,6 +177,101 @@ Herramientas nuevas en el MCP, todas aditivas: `open_report`, `reload_report`, `
 
 `npm run bundle` genera `dist/mcp-bundle.js`, con todos los scripts en `window.__mcp`, para usarlos desde la consola o una extensión cuando no hay CDP.
 
+## Seguridad
+
+| Medida | Detalle |
+|---|---|
+| **MCP en solo lectura por defecto** | Las herramientas que modifican el informe devuelven error salvo con `LS_ALLOW_WRITE=1`. Las destructivas (`delete_component`) requieren además `LS_ALLOW_DELETE=1`. El control se aplica envolviendo `registerTool` por nombre, así que no depende de cada herramienta. El CLI no lleva este control, porque lo ejecuta una persona |
+| **Solo URLs de informes** | `open` / `open_report` solo aceptan `https://(datastudio\|lookerstudio).google.com/reporting/...`. Así una inyección de prompt no puede llevar el navegador autenticado a otro sitio |
+| **Rutas acotadas** | Las rutas que recibe el MCP (spec, export) deben ser `.json` dentro de `LS_WORKSPACE` (por defecto, el directorio actual) |
+| **Aprendizajes como datos** | `record_learning` limpia caracteres de control, limita a 500 caracteres y rechaza lo que parezca una credencial. `get_learnings` marca su salida como datos, no instrucciones |
+| **Sin secretos** | No se leen ni guardan cookies, cabeceras ni el token XSRF. El monitor de red solo registra la ruta y el código de estado. Las herramientas de prueba solo leen el cuerpo de error de `updatePage` |
+| **Copia antes de aplicar** | `apply` exporta el informe completo a `backups/` antes de tocar nada (excluido de git) |
+| **Navegador dedicado** | Usa un perfil propio (`--user-data-dir`). El puerto CDP da control total sobre ese navegador a cualquier proceso local |
+| **Dependencias** | `npm audit`: 0 vulnerabilidades (2026-11-03) |
+
+Registro con escrituras habilitadas, sobre una copia del informe:
+
+```json
+{ "looker-studio": { "command": "node", "args": ["<ruta>/dist/index.js"], "env": { "LS_ALLOW_WRITE": "1" } } }
+```
+
+## Páginas, temas, filtros y plantillas
+
+```bash
+node dist/cli.js pages                                   # listar
+node dist/cli.js pages add "Producto y geografía"        # boton "Anadir pagina" o menu Pagina > Nueva pagina (POST /createPages) + renombrado
+node dist/cli.js pages rename <pageId> "Resumen"
+
+node dist/cli.js theme presets                           # 27 predefinidos (t-harvest = Cosecha, t-eucalyptus, t-pop, t-fog = Niebla...) + biblioteca
+node dist/cli.js theme use Cosecha                       # predefinido, por nombre o id
+node dist/cli.js theme use marca-azul                    # tema propio de themes/library/
+node dist/cli.js theme set examples/tema-marca.json      # tema propio: font, text, fill, accent, accentText, background, grid,
+                                                         #   increase, decrease, border, borderWeight, borderRadius, series[]
+node dist/cli.js theme export mi-tema.json / theme import mi-tema.json
+node dist/cli.js ux                                      # auditoria 0-100: contraste WCAG, paleta, tema, tipografia, layout
+
+node dist/cli.js filters                                 # filtros y donde se aplican
+node dist/cli.js filters add --name "Sin tablet" --field dispositivo --op EQ --values Tablet --exclude --to <pageId|cd-...>
+
+node dist/cli.js templates seed-ui "Tabla dinámica con mapa de calor" "Gráfico de bala" "Indicador"
+node dist/cli.js templates synth simple-treemap simple-sankey simple-funnel
+```
+
+La biblioteca `themes/library/` incluye `marca-azul`, `oscuro-accesible`, `alto-contraste` y `calido-editorial`. Los cuatro obtienen 100 en `ux`.
+
+### Spec: campos nuevos
+
+| Campo | Nivel | Uso |
+|---|---|---|
+| `theme` / `themePreset` | informe | Tema propio, o un predefinido o de la biblioteca |
+| `pages[].name` | página | Busca la página por nombre y la crea si no existe |
+| `pages[].filters[]` | página | Filtro de página `{name, field, op, values, include, dataset}`. Se reutiliza por nombre |
+| `components[].filters[]` | componente | Filtro del componente |
+| `components[].slots` | componente | Huecos propios del tipo: `x_metric`/`y_metric`/`bubble_size` (dispersión), `breakdown` (área/línea), `color` (treemap) |
+| `components[].variant` | componente | Variante sembrada desde el menú, p. ej. `tabla-dinamica-con-mapa-de-calor` |
+| `components[].dateRangeDays`, `stripStyles` | componente | Periodo por defecto de un control; quitar estilos heredados |
+
+`examples/paginas-2-3.spec.json` construye dos páginas completas con 14 componentes, dos filtros de página y el tema de marca.
+
+### Controles (menú "Añadir un control")
+
+`templates seed-ui "control:<opción>"` captura cada control. Todos verificados en la página 4 de `examples/pagina-4-controles.spec.json`:
+
+| Opción del menú | Tipo / variante | Estado |
+|---|---|---|
+| Lista desplegable | `dimension-filter@lista-desplegable` | ✅ |
+| Lista de tamaño fijo | `dimension-filter@lista-de-tamano-fijo` | ✅ |
+| Cuadro de entrada | `dimension-filter@cuadro-de-entrada` | ✅ |
+| Filtro avanzado | `dimension-filter@filtro-avanzado` | ✅ |
+| Control deslizante | `dimension-filter@control-deslizante` | ✅ (campo numérico) |
+| Casilla | `dimension-filter@casilla` | ⚠️ Necesita un campo **Booleano** (reason 116). En Sheets, TRUE/FALSE se infiere como texto: hay que cambiar el tipo en el origen |
+| Filtro predefinido | `button@filtro-predefinido` (preset `button-filter`) | ⚠️ Falta descubrir dónde guarda su condición (reason 265) |
+| Filtro por periodo | `simple-daterangepicker@filtro-por-periodo` + `dateRangeDays` | ✅ |
+| Control de datos | `dataset-picker@control-de-datos` | ✅ Se crea, pero solo tiene sentido con conectores como GA o Ads, no con Sheets |
+| Control de dimensiones | `dimension-control@control-de-dimensiones` | ✅ |
+| Botón | `button@boton` | ✅ |
+| Añadir barra de filtros de lectores | ajuste del informe `viewerFilterBarConfig.orientation` | ✅ `report settings --viewer-filter-bar on` |
+
+### Ajustes del informe y mantenimiento
+
+```bash
+node dist/cli.js report settings                                   # leer
+node dist/cli.js report settings --viewer-filter-bar on --cross-filter on
+node dist/cli.js report settings --set viewModeNav=nav-top,viewModeScale=scale-fit
+node dist/cli.js pages rename <pageId> "Nombre"                    # modelo + nombre visible en la navegacion
+node dist/cli.js orphans examples/*.spec.json                      # componentes que ningun spec referencia
+```
+
+## Inspiración de los MCP de Microsoft
+
+- [`powerbi-modeling-mcp`](https://github.com/microsoft/powerbi-modeling-mcp):
+  - "haz siempre copia antes de operar" → copia automática en `apply`;
+  - aviso de que el modelo de lenguaje puede hacer cambios no deseados → solo lectura por defecto;
+  - trabajo con archivos (TMDL/PBIP) → spec y export JSON;
+  - evaluación de buenas prácticas → `lint` y `ux`.
+- [`microsoft/skills`](https://github.com/microsoft/skills): cargar skills de forma selectiva para no saturar el contexto. Los prompts `skill_*` incluyen solo la guía de su tema.
+
 ## Arquitectura
 
 ```
@@ -209,6 +304,7 @@ Mecanismo interno (detalle en `skills/LOOKER_STUDIO_INTERNALS.md`): `angular.ele
 ## Limitaciones
 
 - Interfaz no oficial: una actualización de Looker Studio/Data Studio puede romperla. Si `legoUndoRedoService` desaparece, las herramientas de lectura usan el DOM como alternativa.
-- Crea componentes de tipos que ya existen en el informe; para otros tipos necesita una plantilla capturada (`templates capture`).
+- Crear componentes requiere una plantilla del tipo: se obtiene clonando uno del informe, con `templates capture`, `seed-ui` (menú del editor) o `synth`.
+- Combinar orígenes (blends) y campos calculados aún no están automatizados.
 - `paddingBottom` no existe en algunos tipos (p. ej. `kpi-metric`), y `generic-shape` no tiene padding: la herramienta lo avisa en `warnings`.
 - Usa un perfil de navegador dedicado. El puerto CDP da control total sobre ese navegador a cualquier proceso local.

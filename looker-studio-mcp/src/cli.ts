@@ -4,6 +4,7 @@
  * Same engine as the MCP server. JSON on stdout, logs on stderr.
  */
 import { disconnectIfConnected } from './browser.js';
+import { assertReportUrl, sanitizeLearning } from './security.js';
 import { learn, listTemplates, readLearnings, summary } from './knowledge.js';
 import { attachToReport } from './looker/report.js';
 import { getReportLayout } from './looker/layout.js';
@@ -23,6 +24,9 @@ import {
   patchComponent,
   reloadReport,
 } from './ops.js';
+import { reportSettings } from './ops3.js';
+import { addFilter, addPage, applyTheme, detachFilter, exportTheme, importTheme, listFilters, listPages, readTheme, renamePage, seedTemplatesFromUi, synthesizeTemplates, themeLibrary, useThemePreset, uxAudit } from './ops3.js';
+import { readFileSync, existsSync } from 'node:fs';
 
 const HELP = `ls-studio <comando> [opciones]
 
@@ -46,13 +50,26 @@ Escritura (modo /edit)
   delete <id>
   patch <id> [--date-days N] [--strip-styles]   Periodo por defecto de un control / quitar estilos de tema
 
+Paginas y tema
+  pages [list] | pages add <nombre> | pages rename <id> <nombre>
+  theme presets | theme use <preset|nombre|biblioteca> | theme export <f.json> | theme import <f.json>
+  report settings [--viewer-filter-bar on|off] [--cross-filter on|off] [--set clave=valor,...]
+  filters [list] | filters add --name N --field F [--op EQ] [--values a,b] [--exclude] [--to <pageId|cd-..>]
+  filters detach <filterId> <pageId|cd-..>
+  theme [get] | theme set <json|archivo.json>    Tema: font,text,fill,accent,accentText,background,grid,
+                                                 increase,decrease,border,borderWeight,borderRadius,series[]
+  ux                               Auditoria UX: contraste WCAG, tema, paleta, tipografia, layout (0-100)
+
 Informe como codigo
+  orphans <spec.json...>           Componentes que ningun spec referencia (restos, anadidos a mano)
   lint <spec.json>                 Valida contra las skills (reticula, lienzo, KPIs, densidad)
   apply <spec.json> [--dry-run]    Crea/actualiza (idempotente via <spec>.state.json)
 
 Aprendizaje (knowledge/)
   templates capture                Guarda una plantilla por tipo del informe abierto
   templates list
+  templates synth <tipo...>        Genera plantillas de tipos nuevos sin informe de referencia
+  templates seed-ui "<opcion>"...   Inserta opciones del menu 'Anadir un grafico' y las guarda como plantilla
   learnings [--raw]                Resumen (o eventos) de lo aprendido
   learn <clave> <texto...>         Anade una nota o solucion (clave reason:93, CODIGO o tema)
 `;
@@ -91,8 +108,11 @@ async function main(): Promise<unknown> {
     case '-h':
       process.stdout.write(HELP);
       return undefined;
-    case 'open':
-      return openReport(need(pos[0], 'la URL del informe'));
+    case 'open': {
+      const url = need(pos[0], 'la URL del informe');
+      assertReportUrl(url);
+      return openReport(url);
+    }
     case 'attach':
       return attachToReport();
     case 'reload':
@@ -155,8 +175,67 @@ async function main(): Promise<unknown> {
       return lintSpec(loadSpec(need(pos[0], 'spec.json')));
     case 'apply':
       return applySpec(need(pos[0], 'spec.json'), { dryRun: !!flags['dry-run'] });
+    case 'pages':
+      if (pos[0] === 'add') return addPage(need(pos[1], 'el nombre de la pagina'));
+      if (pos[0] === 'rename') return renamePage(need(pos[1], 'pageId'), need(pos.slice(2).join(' '), 'el nombre'));
+      return listPages();
+    case 'orphans': {
+      // components on the report that no spec state file references (leftovers, manual additions)
+      const known = new Set<string>();
+      for (const f of pos) {
+        const st = f.replace(/\.json$/i, '') + '.state.json';
+        if (existsSync(st)) for (const id of Object.values((JSON.parse(readFileSync(st, 'utf8')) as { keys: Record<string, string> }).keys)) known.add(id);
+      }
+      const ex = await exportReport();
+      return ex.pages.flatMap((p) =>
+        (p.components as Array<{ id: string; attribute: { left: number; top: number; width: number; height: number }; config: { display: { type: string } } }>)
+          .filter((c) => !known.has(c.id))
+          .map((c) => ({ page: p.name || p.id, id: c.id, type: c.config.display.type, box: [c.attribute.left, c.attribute.top, c.attribute.width, c.attribute.height] })),
+      );
+    }
+    case 'report': {
+      // report settings [--viewer-filter-bar on|off] [--nav left|top|...] [--cross-filter on|off] [--key value]
+      if (pos[0] !== 'settings') throw new Error('Uso: report settings [--viewer-filter-bar on|off] [--cross-filter on|off] [--set clave=valor ...]');
+      const patch: Record<string, unknown> = {};
+      const bool = (v: string | true) => v === true || /^(on|true|1|si|yes)$/i.test(String(v));
+      if (flags['viewer-filter-bar'] !== undefined) patch.viewerFilterBar = bool(flags['viewer-filter-bar']);
+      if (flags['cross-filter'] !== undefined) patch.crossFilterByDefault = bool(flags['cross-filter']);
+      if (typeof flags.set === 'string') for (const kv of flags.set.split(',')) { const [k, v] = kv.split('='); if (k) patch[k] = v === undefined ? true : /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : /^(true|false)$/.test(v) ? v === 'true' : v; }
+      return reportSettings(patch);
+    }
+    case 'filters': {
+      if (pos[0] === 'add') {
+        const vals = list(flags.values).map((v) => (v !== '' && !Number.isNaN(Number(v)) && typeof flags.numeric !== 'undefined' ? Number(v) : v));
+        return addFilter(
+          {
+            name: need(typeof flags.name === 'string' ? flags.name : undefined, '--name'),
+            field: need(typeof flags.field === 'string' ? flags.field : undefined, '--field'),
+            ...(typeof flags.op === 'string' ? { op: flags.op } : {}),
+            values: vals,
+            include: !flags.exclude,
+            ...(typeof flags.dataset === 'string' ? { dataset: flags.dataset } : {}),
+          },
+          typeof flags.to === 'string' ? flags.to : undefined,
+        );
+      }
+      if (pos[0] === 'detach') return detachFilter(need(pos[1], 'filterId'), need(pos[2], 'destino'));
+      return listFilters();
+    }
+    case 'theme': {
+      if (pos[0] === 'presets') return themeLibrary();
+      if (pos[0] === 'use') return useThemePreset(need(pos.slice(1).join(' '), 'el preset'));
+      if (pos[0] === 'export') return exportTheme(need(pos[1], 'el archivo'));
+      if (pos[0] === 'import') return importTheme(need(pos[1], 'el archivo'));
+      if (pos[0] !== 'set') return readTheme();
+      const arg = need(pos[1], 'el tema (JSON o archivo)');
+      return applyTheme(JSON.parse(existsSync(arg) ? readFileSync(arg, 'utf8') : arg));
+    }
+    case 'ux':
+      return uxAudit();
     case 'templates':
       if (pos[0] === 'capture') return captureTemplates();
+      if (pos[0] === 'synth') return synthesizeTemplates(pos.slice(1));
+      if (pos[0] === 'seed-ui') return seedTemplatesFromUi(pos.slice(1));
       return listTemplates();
     case 'learnings':
       return flags.raw ? readLearnings() : summary();
@@ -164,7 +243,8 @@ async function main(): Promise<unknown> {
       const key = need(pos[0], 'la clave');
       const text = pos.slice(1).join(' ');
       const kind = /^reason:\d+$/.test(key) || /^[A-Z_]+$/.test(key) ? 'fix' : 'note';
-      learn(kind, key, kind === 'fix' ? { fix: text, source: 'user' } : { text });
+      const clean = sanitizeLearning(text);
+      learn(kind, key, kind === 'fix' ? { fix: clean, source: 'user' } : { text: clean });
       return { recorded: kind, key };
     }
     default:

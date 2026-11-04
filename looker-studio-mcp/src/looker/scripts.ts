@@ -78,7 +78,7 @@ export function pageInfoScript(): PageInfoRaw {
   let activePageId: string | null = null;
   if (report) {
     pages = (report.config.page || []).map((p: any) => ({ id: String(p.id), name: String(p.attribute && p.attribute.name || '') }));
-    const ap = report.pages[report.selected] || report.pages[0];
+    const ap = (report.pages.find((pg: any) => String(pg.getId()) === ((location.pathname.match(/\/page\/([^/]+)/) || [])[1] ?? '')) || report.pages[report.selected]) || report.pages[0];
     activePageId = ap ? String(ap.getId()) : null;
   }
   return {
@@ -117,7 +117,7 @@ export function readLayoutScript(pageId?: string): LayoutResult {
   if (report) {
     const page =
       (pageId && report.pages.find((p: any) => String(p.getId()) === String(pageId))) ||
-      report.pages[report.selected] ||
+      (report.pages.find((pg: any) => String(pg.getId()) === ((location.pathname.match(/\/page\/([^/]+)/) || [])[1] ?? '')) || report.pages[report.selected]) ||
       report.pages[0];
     if (pageId && String(page.getId()) !== String(pageId)) warnings.push(`Pagina ${pageId} no encontrada; se usa la activa.`);
     const wrappers = Array.from(document.querySelectorAll<HTMLElement>('div.lego-component-repeat'));
@@ -307,7 +307,7 @@ export async function applyBoxModelScript(args: BoxModelArgs): Promise<BoxModelR
       comp.setAttributeValues({ left: l });
     }
   }
-  await new Promise((r) => setTimeout(r, 400));
+  // No in-page waits: timers are throttled in background tabs (observed 2026-11-03).
   const after = snap();
   if (args.padding && JSON.stringify(after.style.padding) === JSON.stringify(before.style.padding) && applied.some((a) => a.startsWith('padding'))) {
     warnings.push('El padding no cambio en config tras aplicarlo; revisa en el panel de propiedades.');
@@ -340,7 +340,8 @@ export function readDataSourcesScript(): DataSourcesResult {
   }
   try { for (const x of report.getDatasourceIds() || []) ids.add(String(x)); } catch { /* ignore */ }
 
-  const dtNames: Record<number, string> = { 0: 'TEXT', 1: 'BOOLEAN', 2: 'DATE', 3: 'NUMBER', 4: 'CURRENCY', 5: 'NUMBER', 6: 'PERCENT', 7: 'GEO', 8: 'URL', 9: 'DATETIME' };
+  // Observed 2026-11-03 (Sheets source): 0 text, 2 number, 6 date, 7 datetime. Others reported raw.
+  const dtNames: Record<number, string> = { 0: 'TEXT', 1: 'BOOLEAN', 2: 'NUMBER', 6: 'DATE', 7: 'DATETIME' };
   const dataSources = [] as DataSourcesResult['dataSources'];
   for (const id of ids) {
     let schema: any = null;
@@ -379,6 +380,9 @@ export function readDataSourcesScript(): DataSourcesResult {
 export async function bindFieldsScript(args: BindFieldsArgs): Promise<BindFieldsResult> {
   const w = window as any;
   const warnings: string[] = [];
+  // trace for diagnosing hangs: read window.__mcpTrace if the evaluate times out
+  const trace: string[] = ((w.__mcpTrace = []) as string[]);
+  const mark = (m: string) => { trace.push(`${Date.now() % 100000} ${m}`); };
   const fail = (error: string): BindFieldsResult => ({ ok: false, componentId: args.componentId, dimensions: [], metrics: [], source: 'internals', warnings, error });
   let report: any;
   try {
@@ -443,19 +447,101 @@ export async function bindFieldsScript(args: BindFieldsArgs): Promise<BindFields
     return fail('Algunos campos no se pudieron resolver. Usa inspect_data_sources para ver los ids validos.');
   }
 
+  mark('resolved');
   const mode = args.mode ?? 'replace';
   const existing = (slot: 'dimensions' | 'metrics') => {
     const v = comp.getDataSourceKeyValue(slot);
     return v && v.primary ? (v.primary as string[]).map((n) => comp.config.conceptDefs[n]).filter(Boolean) : [];
   };
+  let typeFields: any[] = [];
+  try {
+    typeFields = w.angular.element(document.body).injector().get('legoMainRegistry').getDisplayTypeObj(comp.config.config.display.type).getDataFieldConfigs() || [];
+  } catch { /* unknown */ }
+  const slotFor = (kind: 1 | 2) => {
+    // the type's slot for this kind: "primary" if declared, else its first declared slot (e.g. sankey_weight)
+    const own = typeFields.filter((f: any) => f.type === kind);
+    if (!own.length || own.some((f: any) => (f.options?.conceptKey ?? 'primary') === 'primary')) return 'primary';
+    return String(own[0].options.conceptKey);
+  };
   if (args.dimensions.length) {
     const defs = dimFields.map(mkDef);
-    comp.updateDimensions('primary', mode === 'append' ? [...existing('dimensions'), ...defs] : defs);
+    comp.updateDimensions(slotFor(1), mode === 'append' ? [...existing('dimensions'), ...defs] : defs);
   }
   if (args.metrics.length) {
     const defs = metFields.map(mkDef);
-    comp.updateMetrics('primary', mode === 'append' ? [...existing('metrics'), ...defs] : defs);
+    const ms = slotFor(2);
+    if (ms !== 'primary') warnings.push(`Metricas enviadas al hueco "${ms}" (el tipo no usa metricas en "primary").`);
+    comp.updateMetrics(ms, mode === 'append' ? [...existing('metrics'), ...defs] : defs);
   }
+  mark('primary updated');
+  if (args.clearDimensions && !args.dimensions.length) {
+    // Only if the component really has primary dimensions: creating an empty slot on a type
+    // without dimensions (gauge, bullet) makes updatePage return 400 (observed 2026-11-03).
+    const dv = comp.getDataSourceKeyValue('dimensions');
+    if (dv && Array.isArray(dv.primary) && dv.primary.length) comp.updateDimensions('primary', []);
+  }
+  mark('clear done');
+  // Drop stale fields inherited from a template of another report (reason 266/267),
+  // in EVERY concept slot (primary, breakdown, color, x_metric...), and re-point a stale
+  // dateRangeDimension to the first date field of this source (observed 2026-11-03).
+  {
+    const isStale = (n: string) => {
+      const sf = comp.config.conceptDefs[n]?.queryTimeTransformation?.dataTransformation?.sourceFieldName;
+      return !!sf && !concepts[sf];
+    };
+    const replaced = new Set<string>([
+      ...(args.dimensions.length ? ['dimensions:primary'] : []),
+      ...(args.metrics.length ? ['metrics:primary'] : []),
+      ...Object.keys(args.slots || {}).flatMap((k) => [`dimensions:${k}`, `metrics:${k}`]),
+    ]);
+    for (const slot of ['dimensions', 'metrics'] as const) {
+      const v = comp.getDataSourceKeyValue(slot) || {};
+      for (const [ck, names] of Object.entries(v)) {
+        if (replaced.has(`${slot}:${ck}`) || !Array.isArray(names)) continue;
+        const stale = (names as string[]).filter(isStale);
+        if (!stale.length) continue;
+        const keep = (names as string[]).filter((n) => !stale.includes(n)).map((n) => comp.config.conceptDefs[n]).filter(Boolean);
+        if (slot === 'dimensions') comp.updateDimensions(ck, keep); else comp.updateMetrics(ck, keep);
+        warnings.push(`${stale.length} campo(s) heredado(s) inexistente(s) eliminado(s) de ${slot}.${ck}.`);
+      }
+    }
+    const drd = comp.config.config.datasource.keys.dateRangeDimension;
+    if (drd && typeof drd.value === 'string' && isStale(drd.value)) {
+      const date = (Object.values(concepts) as any[]).find((f) => f.dataType === 6 || f.dataType === 7);
+      if (date) {
+        const def = mkDef({ f: date });
+        try { comp.updateConceptPool([def]); } catch { /* older builds */ }
+        comp.config.conceptDefs[def.name] = def;
+        if (typeof comp.setDataSourceKeyValue === 'function') comp.setDataSourceKeyValue('dateRangeDimension', def.name, true, true);
+        else drd.value = def.name;
+        warnings.push(`Dimension de periodo reasignada a ${date.displayName}.`);
+      } else {
+        if (typeof comp.setDataSourceKeyValue === 'function') comp.setDataSourceKeyValue('dateRangeDimension', undefined, true, true);
+        else delete drd.value;
+        warnings.push('Dimension de periodo heredada eliminada (el origen no tiene fechas).');
+      }
+    }
+  }
+  mark('stale done');
+  // Extra concept slots (conceptKey) declared by the display type, e.g. scatter
+  // x_metric/y_metric/bubble_size, area/line "breakdown", treemap "color".
+  if (args.slots) {
+    let fieldCfgs: any[] = [];
+    try {
+      const reg = w.angular.element(document.body).injector().get('legoMainRegistry');
+      fieldCfgs = reg.getDisplayTypeObj(comp.config.config.display.type).getDataFieldConfigs() || [];
+    } catch { /* unknown: infer from field type */ }
+    for (const [slot, refs] of Object.entries(args.slots)) {
+      const fc = fieldCfgs.find((f: any) => f.options && f.options.conceptKey === slot);
+      const kind: 0 | 1 = fc ? (fc.type === 1 ? 0 : 1) : 1;
+      const resolved = (refs as string[]).map((r) => resolve(r, kind)).filter(Boolean) as { f: any; agg?: number }[];
+      if (resolved.length !== (refs as string[]).length) return fail(`Campos del slot "${slot}" no resueltos.`);
+      const defs = resolved.map(mkDef);
+      if (kind === 0) comp.updateDimensions(slot, defs);
+      else comp.updateMetrics(slot, defs);
+    }
+  }
+  mark('slots done');
   // Re-point orphan sort columns (reason 268 "Orden no valido"): after replacing
   // dims/metrics, sortData may still reference concepts that are gone (e.g. from a template).
   try {
@@ -463,7 +549,18 @@ export async function bindFieldsScript(args: BindFieldsArgs): Promise<BindFields
     const cur = (slot: string) => (k[slot] && k[slot].value && k[slot].value.primary) || [];
     const live = new Set<string>([...cur('dimensions'), ...cur('metrics')]);
     const sd = k.sortData && Array.isArray(k.sortData.value) ? k.sortData.value : null;
-    if (sd && sd.some((s: any) => !live.has(s.sortColumn))) {
+    // Time charts with a date dimension must be ordered by that date (ascending): a template
+    // sorted by a metric produced an unordered X axis (observed 2026-11-03 on a combo chart).
+    const isTimeType = /linechart|areachart|combochart|timeline/.test(String(comp.config.config.display.type));
+    const firstDim = cur('dimensions')[0];
+    const firstDimField = firstDim && comp.config.conceptDefs[firstDim]?.queryTimeTransformation?.dataTransformation?.sourceFieldName;
+    const dimIsDate = !!firstDimField && concepts[firstDimField] && (concepts[firstDimField].dataType === 6 || concepts[firstDimField].dataType === 7);
+    if (isTimeType && dimIsDate && !(sd && sd[0] && sd[0].sortColumn === firstDim && sd[0].sortDir === 0)) {
+      const v = [{ sortDir: 0, sortColumn: firstDim }];
+      if (typeof comp.setDataSourceKeyValue === 'function') comp.setDataSourceKeyValue('sortData', v, true, true);
+      else k.sortData = { stateKey: 'sortData', dominant: 2, value: v };
+      warnings.push('Orden temporal: por fecha ascendente.');
+    } else if (sd && sd.some((s: any) => !live.has(s.sortColumn))) {
       const isTime = /linechart|areachart|timeline|combochart/.test(String(comp.config.config.display.type));
       const col = isTime ? cur('dimensions')[0] ?? cur('metrics')[0] : cur('metrics')[0] ?? cur('dimensions')[0];
       if (col) {
@@ -476,7 +573,9 @@ export async function bindFieldsScript(args: BindFieldsArgs): Promise<BindFields
   } catch (e: any) {
     warnings.push('No se pudo revisar sortData: ' + (e && e.message));
   }
+  mark('sort done');
   try { comp.syncState(true); } catch (e: any) { warnings.push('syncState fallo: ' + (e && e.message)); }
+  mark('synced');
   // Persist: wrapperSaveService.save([comp]) -> POST updatePage with the full page
   // snapshot (verified 2026-11-03: bindings survive a reload in /edit).
   // updateMetrics/updateDimensions alone never trigger the autosave.
@@ -489,7 +588,7 @@ export async function bindFieldsScript(args: BindFieldsArgs): Promise<BindFields
     comp.setAttributeValues({ left: l });
   }
 
-  await new Promise((r) => setTimeout(r, 2500));
+  // No in-page wait (background-tab timer throttling); callers re-check errors from Node.
   let error: string | undefined;
   try {
     if (comp.hasError && comp.hasError()) {

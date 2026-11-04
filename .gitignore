@@ -16,3 +16,6 @@ dataset/*.tsv
 Thumbs.db
 .env
 .env.*
+
+# automatic report backups made by apply
+backups/

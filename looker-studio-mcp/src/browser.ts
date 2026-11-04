@@ -27,9 +27,13 @@ async function connect(): Promise<Browser> {
   const ws = process.env.LS_CDP_WS;
   const browserURL = process.env.LS_CDP_URL ?? DEFAULT_CDP_URL;
   try {
+    // Ignore sandboxed viz iframes (*.usercontent.goog), recaptcha workers and extensions:
+    // attaching to them can hang (Network.enable never returns, observed 2026-11-03).
+    const targetFilter = (t: { url(): string; type(): string }) =>
+      !/usercontent\.goog|recaptcha|^chrome-extension:/.test(t.url()) && t.type() !== 'service_worker';
     const browser = ws
-      ? await puppeteer.connect({ browserWSEndpoint: ws, defaultViewport: null })
-      : await puppeteer.connect({ browserURL, defaultViewport: null });
+      ? await puppeteer.connect({ browserWSEndpoint: ws, defaultViewport: null, targetFilter, protocolTimeout: 60_000 })
+      : await puppeteer.connect({ browserURL, defaultViewport: null, targetFilter, protocolTimeout: 60_000 });
     browser.on('disconnected', () => {
       log('Navegador desconectado; se reconectara en la proxima llamada.');
       browserPromise = null;
@@ -78,7 +82,13 @@ async function pageState(page: Page): Promise<{ visible: boolean; focused: boole
  */
 export async function getReportPage(): Promise<Page> {
   const browser = await getBrowser();
-  const pages = (await browser.pages()).filter((p) => REPORT_URL_RE.test(p.url()));
+  // Filter targets by URL BEFORE creating Page objects: attaching to unrelated hidden tabs
+  // (e.g. the Data Studio home in the background) can hang (observed 2026-11-03).
+  const pages = (
+    await Promise.all(
+      browser.targets().filter((t) => t.type() === 'page' && REPORT_URL_RE.test(t.url())).map((t) => t.page()),
+    )
+  ).filter((p): p is Page => !!p);
   if (!pages.length) {
     throw new BrowserNotReadyError(
       'No hay ninguna pestana con un informe de Looker Studio abierto ' +
@@ -86,6 +96,9 @@ export async function getReportPage(): Promise<Page> {
         HOW_TO_LAUNCH,
     );
   }
+  // Background tabs throttle timers and rendering: ask the browser to treat the report as
+  // focused and active (no window switching needed).
+  for (const p of pages) await keepActive(p);
   if (pages.length === 1) return (lastPage = pages[0]!);
 
   const states = await Promise.all(pages.map(async (p) => ({ page: p, ...(await pageState(p)) })));
@@ -96,6 +109,19 @@ export async function getReportPage(): Promise<Page> {
     states[0]!;
   lastPage = pick.page;
   return pick.page;
+}
+
+const activated = new WeakSet<Page>();
+async function keepActive(page: Page): Promise<void> {
+  if (activated.has(page)) return;
+  activated.add(page);
+  try {
+    const s = await page.createCDPSession();
+    await s.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => undefined);
+    await s.send('Page.setWebLifecycleState', { state: 'active' }).catch(() => undefined);
+  } catch {
+    /* best effort */
+  }
 }
 
 /** Detaches from the browser (without closing it) if a connection exists. */

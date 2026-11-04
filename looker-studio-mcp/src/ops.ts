@@ -2,7 +2,8 @@
  * High-level operations shared by the CLI (src/cli.ts) and the MCP server
  * (src/index.ts). Every operation feeds the learning layer (knowledge.ts).
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Page } from 'puppeteer-core';
 import { evaluateOn, getBrowser, getReportPage, REPORT_URL_RE } from './browser.js';
 import { getTemplate, knownFix, learn, saveTemplate, seedKnowledge, summary } from './knowledge.js';
@@ -29,6 +30,8 @@ import {
 import type { DiagnoseIssue, DiagnoseResult } from './looker/types.js';
 import type { Box, CreateComponentResult, ExportResult } from './looker/types2.js';
 import { lintSpec, loadSpec, type ReportSpec, type ResolvedComponent } from './spec.js';
+import { probeReadScript, probeStartScript } from './looker/scripts3.js';
+import { addFilter, addPage, applyTheme, listPages, useThemePreset } from './ops3.js';
 
 const T = Number(process.env.LS_EVAL_TIMEOUT_MS ?? 15_000);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -75,8 +78,8 @@ export async function waitReady(page: Page, timeoutMs = 45_000): Promise<void> {
 /** Opens (or reuses) a tab on the given report URL and waits for the editor. */
 export async function openReport(url: string): Promise<{ url: string }> {
   const browser = await getBrowser();
-  const pages = await browser.pages();
-  const page = pages.find((p) => REPORT_URL_RE.test(p.url())) ?? (await browser.newPage());
+  const target = browser.targets().find((t) => t.type() === 'page' && REPORT_URL_RE.test(t.url()));
+  const page = (target && (await target.page())) || (await browser.newPage());
   // Bring to front BEFORE navigating: in a hidden tab the editor does not boot
   // (observed 2026-11-03: it ends on the home page with the model empty).
   await page.bringToFront();
@@ -158,7 +161,21 @@ export async function resolveDataset(page: Page, sel: string | undefined): Promi
   if (!sel.startsWith('@')) return sel;
   const field = sel.slice(1).toLowerCase();
   const ds = await evaluateOn(page, T, readDataSourcesScript);
-  const hit = ds.dataSources.find((d) => d.fields.some((f) => f.id.toLowerCase() === field || f.name.toLowerCase() === field));
+  let hit = ds.dataSources.find((d) => d.fields.some((f) => f.id.toLowerCase() === field || f.name.toLowerCase() === field));
+  if (!hit) {
+    // Sources no component uses yet have an empty schema: probe them with a temporary, unsaved component.
+    for (const d of ds.dataSources.filter((x) => !x.fields.length)) {
+      const st = await evaluateOn(page, T, probeStartScript, d.dataSourceId);
+      if (!st.ok) continue;
+      let pr = { ready: false, fields: [] as Array<{ id: string; name: string }> };
+      for (let i = 0; i < 24 && !pr.ready; i++) {
+        await sleep(250);
+        pr = await evaluateOn(page, T, probeReadScript, i === 23);
+      }
+      if (pr.ready) learn('note', `dataset_fields:${d.dataSourceId}`, { text: pr.fields.map((f) => f.name).join(',') });
+      if (pr.fields.some((f) => f.id.toLowerCase() === field || f.name.toLowerCase() === field)) return d.dataSourceId;
+    }
+  }
   if (!hit) throw new Error(`Ningun origen del informe tiene el campo "${sel.slice(1)}". Anade el origen o revisa el nombre.`);
   return hit.dataSourceId;
 }
@@ -169,18 +186,22 @@ export async function resolveDataset(page: Page, sel: string | undefined): Promi
 
 export interface CreateOptions {
   type: string;
+  /** Template variant key suffix (type@variant). Forces using that template. */
+  variant?: string;
   box: Box;
   pageId?: string;
   dataset?: string;
   dimensions?: string[];
   metrics?: string[];
   padding?: number;
+  slots?: Record<string, string[]>;
 }
 
 export async function createComponent(o: CreateOptions): Promise<CreateComponentResult & { bound?: unknown; fix?: unknown }> {
   const page = await editPage();
   const datasetId = await resolveDataset(page, o.dataset);
-  const hasFields = !!(o.dimensions?.length || o.metrics?.length);
+  const hasFields = !!(o.dimensions?.length || o.metrics?.length || (o.slots && Object.keys(o.slots).length));
+  const NO_DIMS = ['gauge-viz', 'bulletchart', 'kpi-metric'];
   const t0 = Date.now();
   const res = await evaluateOn(page, T, createComponentScript, {
     type: o.type,
@@ -188,7 +209,8 @@ export async function createComponent(o: CreateOptions): Promise<CreateComponent
     ...(o.pageId ? { pageId: o.pageId } : {}),
     ...(datasetId ? { datasetId } : {}),
     ...(o.padding !== undefined ? { padding: o.padding } : {}),
-    template: getTemplate(o.type),
+    template: (o.variant && getTemplate(`${o.type}@${o.variant}`)) || getTemplate(o.type),
+    ...(o.variant ? { preferTemplate: true } : {}),
     deferSave: hasFields,
   });
   if (!res.ok) {
@@ -199,6 +221,8 @@ export async function createComponent(o: CreateOptions): Promise<CreateComponent
   if (hasFields) {
     bound = await evaluateOn(page, T + 10_000, bindFieldsScript, {
       componentId: res.componentId!, dimensions: o.dimensions ?? [], metrics: o.metrics ?? [],
+      ...(NO_DIMS.includes(o.type) && !o.dimensions?.length ? { clearDimensions: true } : {}),
+      ...(o.slots ? { slots: o.slots } : {}),
     });
   }
   await sleep(2500);
@@ -215,12 +239,20 @@ export async function createComponent(o: CreateOptions): Promise<CreateComponent
   return { ...res, ...(bound ? { bound } : {}) };
 }
 
-export async function deleteComponent(componentId: string): Promise<{ ok: boolean; method: string }> {
+export async function deleteComponent(componentId: string): Promise<{ ok: boolean; method: string; warning?: string }> {
   const page = await editPage();
+  const t0 = Date.now();
   const r = await evaluateOn(page, T, deleteComponentScript, componentId);
   if (r.ok) {
+    // Wait for this delete's own updatePage: back-to-back page saves can drop one (observed 2026-11-03).
+    for (let i = 0; i < 24 && !netSince(page, t0).some((e) => /updatePage/.test(e.path)); i++) await sleep(250);
+    const saved = netSince(page, t0).filter((e) => /updatePage|updateReport/.test(e.path));
+    if (saved.some((e) => e.status >= 400)) {
+      learn('save_rejected', 'delete', { statuses: saved.map((e) => e.status) });
+      throw new Error(`El borrado de ${componentId} fue rechazado (${saved.map((e) => e.status).join(',')}).`);
+    }
     learn('note', 'delete_method', { text: r.method });
-    return { ok: true, method: r.method! };
+    return { ok: true, method: r.method!, ...(saved.length ? {} : { warning: 'Sin respuesta de guardado en 6 s: verifica con reload si es critico.' }) };
   }
   if (r.needsKeyboard) {
     learn('method_missing', 'page.removeComponent', { fallback: 'select+Delete' });
@@ -247,6 +279,8 @@ export interface ApplyResult {
   dryRun: boolean;
   lint: ReturnType<typeof lintSpec>['issues'];
   actions: Array<{ key: string; action: 'create' | 'update' | 'skip'; componentId?: string; error?: string; warnings?: string[] }>;
+  pages?: Array<{ name: string; pageId: string; created: boolean }>;
+  theme?: unknown;
   diagnose?: unknown;
   stateFile?: string;
 }
@@ -269,8 +303,41 @@ export async function applySpec(specOrFile: string | ReportSpec, opts: { dryRun?
   }
   state.reportId = info.internalReportId;
 
+  // Backup before any change (like the Power BI modeling MCP's "always back up" rule):
+  // a full export that can be used to compare or rebuild. backups/ is git-ignored.
+  if (!opts.dryRun) {
+    const dir = join(process.env.LS_BACKUP_DIR ?? join(process.cwd(), 'backups'));
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${info.internalReportId}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    writeFileSync(file, JSON.stringify(await evaluateOn(page, T, exportReportScript), null, 2));
+    (result as ApplyResult & { backup?: string }).backup = file;
+  }
+
+  // theme + pages by name (created if missing)
+  if (spec.theme && !opts.dryRun) result.theme = await applyTheme(spec.theme);
+  else if (spec.themePreset && !opts.dryRun) result.theme = await useThemePreset(spec.themePreset);
+  const pageIds: Record<string, string> = {};
+  const wanted = [...new Set(components.map((c) => c.page).filter((p) => p.startsWith('name:')))].map((p) => p.slice(5));
+  if (wanted.length) {
+    let pages = await listPages();
+    result.pages = [];
+    for (const name of wanted) {
+      let hit = pages.find((p) => p.name === name);
+      let created = false;
+      if (!hit && !opts.dryRun) {
+        await addPage(name);
+        await reloadReport();
+        pages = await listPages();
+        hit = pages.find((p) => p.name === name);
+        created = true;
+      }
+      if (hit) pageIds[`name:${name}`] = hit.id;
+      result.pages.push({ name, pageId: hit?.id ?? '(nueva)', created });
+    }
+  }
+
   for (const c of components) {
-    const pageId = c.page === 'active' ? undefined : c.page;
+    const pageId = c.page === 'active' ? undefined : c.page.startsWith('name:') ? pageIds[c.page] : c.page;
     const existingId = c.id ?? state.keys[c.key];
     const exists = existingId ? await evaluateOn(page, T, componentExistsScript, existingId) : false;
     if (opts.dryRun) {
@@ -285,9 +352,11 @@ export async function applySpec(specOrFile: string | ReportSpec, opts: { dryRun?
         result.actions.push({ key: c.key, action: 'update', componentId: existingId!, ...(extra.length ? { warnings: extra } : {}) });
       } else {
         const r = await createComponent({
+          ...(c.variant ? { variant: c.variant } : {}),
           type: c.type, box: { x: c.x, y: c.y, width: c.w, height: c.h },
           ...(pageId ? { pageId } : {}), ...(c.dataset ? { dataset: c.dataset } : {}),
           dimensions: c.dimensions, metrics: c.metrics, ...(c.padding !== undefined ? { padding: c.padding } : {}),
+          ...(c.slots ? { slots: c.slots } : {}),
         });
         state.keys[c.key] = r.componentId!;
         const extra = await patchIfNeeded(page, r.componentId!, c);
@@ -298,7 +367,25 @@ export async function applySpec(specOrFile: string | ReportSpec, opts: { dryRun?
     }
     if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 2));
   }
+  // page-level and component-level filters (idempotent: reused by name)
   if (!opts.dryRun) {
+    const filterLog: Array<{ name: string; target: string; filterId?: string; error?: string }> = [];
+    for (const p of spec.pages) {
+      const pid = p.page && p.page !== 'active' ? p.page : p.name ? pageIds[`name:${p.name}`] : info.activePageId ?? undefined;
+      for (const f of p.filters ?? []) {
+        try { const r = await addFilter(f, pid ?? undefined); filterLog.push({ name: f.name, target: `page:${pid}`, filterId: r.filterId }); }
+        catch (e) { filterLog.push({ name: f.name, target: `page:${pid}`, error: (e as Error).message }); }
+      }
+    }
+    for (const c of components) {
+      const id = state.keys[c.key];
+      for (const f of c.filters ?? []) {
+        if (!id) continue;
+        try { const r = await addFilter(f, id); filterLog.push({ name: f.name, target: id, filterId: r.filterId }); }
+        catch (e) { filterLog.push({ name: f.name, target: id, error: (e as Error).message }); }
+      }
+    }
+    if (filterLog.length) (result as ApplyResult & { filters?: unknown }).filters = filterLog;
     await reloadReport();
     result.diagnose = await diagnoseWithKnowledge();
   }
@@ -330,8 +417,12 @@ async function updateExisting(page: Page, id: string, c: ResolvedComponent): Pro
     dimensions: { width: c.w, height: c.h },
     ...(c.padding !== undefined ? { padding: { top: c.padding, right: c.padding, bottom: c.padding, left: c.padding } } : {}),
   });
-  if (c.dimensions.length || c.metrics.length) {
-    const r = await evaluateOn(page, T + 10_000, bindFieldsScript, { componentId: id, dimensions: c.dimensions, metrics: c.metrics });
+  if (c.dimensions.length || c.metrics.length || c.slots) {
+    const r = await evaluateOn(page, T + 10_000, bindFieldsScript, {
+      componentId: id, dimensions: c.dimensions, metrics: c.metrics,
+      ...(['gauge-viz', 'bulletchart', 'kpi-metric'].includes(c.type) && !c.dimensions.length ? { clearDimensions: true } : {}),
+      ...(c.slots ? { slots: c.slots } : {}),
+    });
     if (!r.ok) throw new Error(r.error);
   }
 }

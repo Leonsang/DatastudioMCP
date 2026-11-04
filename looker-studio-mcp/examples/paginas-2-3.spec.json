@@ -1,0 +1,45 @@
+{
+  "grid": 10,
+  "canvasWidth": 1200,
+  "canvasHeight": 900,
+  "themePreset": "marca-azul",
+  "defaults": { "dataset": "@ingresos" },
+  "pages": [
+    {
+      "name": "Producto y geografía",
+      "filters": [{ "name": "Sin devoluciones", "field": "devuelto", "op": "EQ", "values": ["FALSE"] }],
+      "components": [
+        { "key": "p2_canal", "type": "dimension-filter", "x": 20, "y": 20, "w": 280, "h": 60, "dimensions": ["canal"], "stripStyles": true },
+        { "key": "p2_region", "type": "dimension-filter", "x": 320, "y": 20, "w": 280, "h": 60, "dimensions": ["region"], "stripStyles": true },
+        { "key": "p2_periodo", "type": "simple-daterangepicker", "x": 880, "y": 20, "w": 280, "h": 60, "dateRangeDays": 1100, "stripStyles": true },
+        { "key": "p2_treemap", "type": "simple-treemap", "x": 20, "y": 100, "w": 560, "h": 360,
+          "dimensions": ["categoria", "subcategoria"], "metrics": ["SUM(ingresos)"] },
+        { "key": "p2_pivot", "type": "pivot-table", "variant": "tabla-dinamica-con-mapa-de-calor", "x": 600, "y": 100, "w": 560, "h": 360,
+          "dimensions": ["region", "canal"], "metrics": ["SUM(ingresos)"] },
+        { "key": "p2_burbujas", "type": "simple-scatterchart", "variant": "grafico-de-burbujas", "x": 20, "y": 480, "w": 560, "h": 400,
+          "dimensions": ["pais"], "slots": { "x_metric": ["SUM(ingresos)"], "y_metric": ["AVG(valoracion)"], "bubble_size": ["SUM(unidades)"] } },
+        { "key": "p2_productos", "type": "simple-table", "variant": "tabla-con-mapa-de-calor", "x": 600, "y": 480, "w": 560, "h": 400,
+          "dimensions": ["producto", "categoria"], "metrics": ["SUM(ingresos)", "SUM(unidades)", "AVG(descuento_pct)"] }
+      ]
+    },
+    {
+      "name": "Objetivos y tráfico",
+      "filters": [{ "name": "Sin tablet", "field": "dispositivo", "op": "EQ", "values": ["Tablet"], "include": false, "dataset": "@sesiones" }],
+      "components": [
+        { "key": "p3_periodo", "type": "simple-daterangepicker", "x": 880, "y": 20, "w": 280, "h": 60, "dateRangeDays": 1100, "stripStyles": true },
+        { "key": "p3_combo", "type": "simple-combochart", "dataset": "@sesiones", "x": 20, "y": 100, "w": 740, "h": 300,
+          "dimensions": ["fecha"], "metrics": ["SUM(sesiones)", "SUM(conversiones)"] },
+        { "key": "p3_rebote", "type": "gauge-viz", "dataset": "@sesiones", "x": 780, "y": 100, "w": 380, "h": 300,
+          "metrics": ["AVG(rebote_pct)"] },
+        { "key": "p3_usuarios", "type": "simple-areachart", "dataset": "@sesiones", "x": 20, "y": 420, "w": 560, "h": 300,
+          "dimensions": ["fecha"], "metrics": ["SUM(usuarios)"], "slots": { "breakdown": ["dispositivo"] } },
+        { "key": "p3_sankey", "type": "simple-sankey", "dataset": "@sesiones", "x": 600, "y": 420, "w": 560, "h": 300,
+          "dimensions": ["fuente", "medio"], "metrics": ["SUM(sesiones)"] },
+        { "key": "p3_objetivo", "type": "bulletchart", "dataset": "@objetivo_ingresos", "x": 20, "y": 740, "w": 560, "h": 140,
+          "metrics": ["SUM(objetivo_ingresos)"] },
+        { "key": "p3_embudo", "type": "simple-funnel", "dataset": "@sesiones", "x": 600, "y": 740, "w": 560, "h": 140,
+          "dimensions": ["dispositivo"], "metrics": ["SUM(sesiones)"] }
+      ]
+    }
+  ]
+}

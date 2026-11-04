@@ -1,0 +1,25 @@
+{
+  "font": "Roboto",
+  "text": "#202124",
+  "header": "#202124",
+  "fill": "#ffffff",
+  "accent": "#1a73e8",
+  "accentText": "#ffffff",
+  "background": "transparent",
+  "grid": "#e8eaed",
+  "increase": "#188038",
+  "decrease": "#d93025",
+  "border": "#dadce0",
+  "borderWeight": 1,
+  "borderRadius": 8,
+  "series": [
+    "#0072B2",
+    "#B35900",
+    "#007A5A",
+    "#AD4E8A",
+    "#6B5B00",
+    "#5E5E5E",
+    "#000000",
+    "#C1440E"
+  ]
+}
