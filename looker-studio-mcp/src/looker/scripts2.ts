@@ -178,7 +178,7 @@ export function createComponentScript(args: CreateComponentArgs): CreateComponen
   }
   const page = args.pageId
     ? report.pages.find((p: any) => String(p.getId()) === String(args.pageId))
-    : report.pages[report.selected] || report.pages[0];
+    : (report.pages.find((pg: any) => String(pg.getId()) === ((location.pathname.match(/\/page\/([^/]+)/) || [])[1] ?? '')) || report.pages[report.selected]) || report.pages[0];
   if (!page) return fail(`Pagina ${args.pageId} no encontrada.`);
   const all = [...report.pages.flatMap((p: any) => p.components), ...report.components];
 
@@ -186,7 +186,7 @@ export function createComponentScript(args: CreateComponentArgs): CreateComponen
   const same = all.find((c: any) => c.config.config.display.type === args.type);
   let cfg: any;
   let source: string;
-  if (same) {
+  if (same && !(args.preferTemplate && args.template)) {
     cfg = same.duplicateConfig();
     source = `clone:${same.getId()}`;
   } else if (args.template) {
@@ -222,7 +222,7 @@ export function createComponentScript(args: CreateComponentArgs): CreateComponen
   // Observed 2026-11-03: a Firebase (dark theme) template brought fontColor #F3F3F3.
   if (source === 'template' && cfg.config.display && cfg.config.display.keys) {
     const dk = cfg.config.display.keys;
-    const THEME = /color|font|background|border|shadow|opacity/i;
+    const THEME = /color|fontfamily|background|border|shadow|opacity/i;
     const dropped = Object.keys(dk).filter((k) => THEME.test(k));
     for (const k of dropped) delete dk[k];
     if (dropped.length) warnings.push(`Estilos de tema de la plantilla eliminados: ${dropped.join(', ')}.`);
@@ -312,10 +312,13 @@ export function patchComponentScript(args: { componentId: string; dateRangeDays?
       changes.push(`dateRange=ultimos ${Math.round(args.dateRangeDays)} dias`);
     }
     if (args.stripThemeStyles) {
+      // Reset through the component API: deleting keys from config is not persisted
+      // and re-creating with the same id restores the cached state (both observed 2026-11-03).
+      const THEME = /color|fontfamily|background|border|shadow|opacity/i;
       const dk = comp.config.config.display.keys || {};
-      const THEME = /color|font|background|border|shadow|opacity/i;
-      for (const k of Object.keys(dk).filter((x) => THEME.test(x))) {
-        delete dk[k];
+      const has = (v: any) => v !== undefined && v !== null && !(Array.isArray(v) && v.every((x: any) => x === null || x === undefined));
+      for (const k of Object.keys(dk).filter((x) => THEME.test(x) && has(dk[x] && dk[x].value))) {
+        comp.setDisplayKeyValue(k, undefined);
         changes.push(`-${k}`);
       }
     }

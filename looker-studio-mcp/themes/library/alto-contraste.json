@@ -1,0 +1,3 @@
+{ "font": "Arial", "text": "#000000", "header": "#000000", "fill": "#FFFFFF", "accent": "#000000", "accentText": "#FFFFFF",
+  "background": "#FFFFFF", "grid": "#767676", "increase": "#006400", "decrease": "#B00020", "border": "#000000", "borderWeight": 2, "borderRadius": 0,
+  "series": ["#000000", "#0047AB", "#B00020", "#006400", "#6A1B9A", "#8B4500", "#004D4D", "#4D4D4D"] }

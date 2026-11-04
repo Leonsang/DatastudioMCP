@@ -1,0 +1,3 @@
+{ "font": "Georgia", "text": "#3E2723", "header": "#3E2723", "fill": "#FFFBF5", "accent": "#A0430A", "accentText": "#FFFFFF",
+  "background": "#FFFBF5", "grid": "#EADFD3", "increase": "#2E7D32", "decrease": "#B71C1C", "border": "#E0D6CC", "borderWeight": 1, "borderRadius": 4,
+  "series": ["#A0430A", "#00695C", "#6A1B9A", "#8D6E00", "#1565C0", "#AD1457", "#4E342E", "#37474F"] }

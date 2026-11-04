@@ -186,6 +186,7 @@ export function seedKnowledge(): void {
     ['RAW_ROWS', 'Metrica sin agregar en un origen Sheets/CSV (todas las columnas son dimensiones): usa SUM(campo)/AVG(campo)/COUNT_DISTINCT(campo).'],
     ['reason:268', 'Orden no valido: el orden apunta a un campo que ya no esta en el grafico; vuelve a vincular con bind_fields_to_component (reasigna el orden) o elige el orden en el panel.'],
     ['SORT_INVALID', 'Orden huerfano: bind_fields_to_component lo reasigna a la primera metrica (desc) o a la fecha (asc) en series temporales.'],
+    ['reason:267', 'Metrica no valida: el componente conserva una metrica que no existe en su origen (p. ej. heredada de una plantilla); bind la elimina o vincula una metrica del origen actual.'],
     ['reason:266', 'Dimension no valida: el campo de la dimension no existe en el origen del grafico; vincula una dimension del origen actual.'],
     ['save_rejected:scrubbed_template', 'No vacies conceptDefs/dimensiones/metricas de una plantilla: cambia solo el dataset y vincula los campos antes del primer guardado.'],
     ['save_rejected:type_change', 'updatePage 400 al crear: no cambies display.type de un JSON clonado; captura una plantilla real del tipo con capture_templates y recarga para descartar el estado invalido.'],

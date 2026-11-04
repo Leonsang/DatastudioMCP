@@ -35,6 +35,12 @@ export interface SpecComponent {
   dateRangeDays?: number;
   /** Remove per-component theme overrides (colors/fonts/borders). */
   stripStyles?: boolean;
+  /** Component-level filters. */
+  filters?: import('./ops3.js').FilterSpec[];
+  /** Template variant, e.g. "tabla-dinamica-con-mapa-de-calor" (templates seed-ui). */
+  variant?: string;
+  /** Extra concept slots (scatter x_metric/y_metric/bubble_size, breakdown, color...). */
+  slots?: Record<string, string[]>;
 }
 
 export interface SpecRow {
@@ -43,7 +49,12 @@ export interface SpecRow {
 }
 
 export interface SpecPage {
+  /** Page id, or "active". */
   page?: string;
+  /** Page name: apply finds the page by name and creates it if missing. */
+  name?: string;
+  /** Page-level filters (apply to every component of the page). */
+  filters?: import('./ops3.js').FilterSpec[];
   components: Array<SpecComponent | SpecRow>;
 }
 
@@ -52,6 +63,10 @@ export interface ReportSpec {
   canvasWidth?: number;
   canvasHeight?: number;
   defaults?: { dataset?: string; padding?: number };
+  /** Report theme (see theme.ts FriendlyTheme). */
+  theme?: import('./theme.js').FriendlyTheme;
+  /** Or a preset id/name ("t-harvest" / "Cosecha") or a themes/library name. */
+  themePreset?: string;
   pages: SpecPage[];
 }
 
@@ -64,6 +79,9 @@ export interface ResolvedComponent extends Required<Pick<SpecComponent, 'key' | 
   page: string;
   dateRangeDays?: number;
   stripStyles?: boolean;
+  filters?: import('./ops3.js').FilterSpec[];
+  variant?: string;
+  slots?: Record<string, string[]>;
 }
 
 export interface LintIssue {
@@ -96,7 +114,7 @@ export function resolveSpec(spec: ReportSpec): ResolvedComponent[] {
   const floorGrid = (v: number) => Math.floor(v / grid) * grid;
   const out: ResolvedComponent[] = [];
   for (const p of spec.pages) {
-    const page = p.page ?? 'active';
+    const page = p.page ?? (p.name ? `name:${p.name}` : 'active');
     for (const c of p.components) {
       if ('row' in c) {
         const { y, h } = c.row;
@@ -114,6 +132,9 @@ export function resolveSpec(spec: ReportSpec): ResolvedComponent[] {
             dimensions: it.dimensions ?? [], metrics: it.metrics ?? [], page,
             ...(it.dateRangeDays !== undefined ? { dateRangeDays: it.dateRangeDays } : {}),
             ...(it.stripStyles ? { stripStyles: true } : {}),
+            ...(it.filters ? { filters: it.filters } : {}),
+            ...(it.variant ? { variant: it.variant } : {}),
+            ...(it.slots ? { slots: it.slots } : {}),
           });
         });
       } else {
@@ -123,6 +144,9 @@ export function resolveSpec(spec: ReportSpec): ResolvedComponent[] {
           dimensions: c.dimensions ?? [], metrics: c.metrics ?? [], page,
           ...(c.dateRangeDays !== undefined ? { dateRangeDays: c.dateRangeDays } : {}),
           ...(c.stripStyles ? { stripStyles: true } : {}),
+          ...(c.filters ? { filters: c.filters } : {}),
+          ...(c.variant ? { variant: c.variant } : {}),
+          ...(c.slots ? { slots: c.slots } : {}),
         });
       }
     }
@@ -154,7 +178,7 @@ export function lintSpec(spec: ReportSpec): { issues: LintIssue[]; components: R
     if (c.padding !== undefined && (c.padding < 10 || c.padding > 16))
       push('info', c.key, 'padding', `Padding ${c.padding}px fuera de 10–16 px [diseno-layout §3].`);
     if (c.type === 'kpi-metric') {
-      if (c.metrics.length !== 1) push('warning', c.key, 'kpi', 'Un scorecard debe tener exactamente 1 metrica [kpi-scorecards].');
+      if (c.metrics.length !== 1 && !c.slots) push('warning', c.key, 'kpi', 'Un scorecard debe tener exactamente 1 metrica [kpi-scorecards].');
       if (c.h < 100 || c.h > 140) push('info', c.key, 'kpi', `Alto de scorecard ${c.h}px fuera de 100–140 [kpi-scorecards §1].`);
     }
     if (c.type === 'simple-daterangepicker' && c.dateRangeDays === undefined)

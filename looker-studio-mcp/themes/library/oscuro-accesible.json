@@ -1,0 +1,3 @@
+{ "font": "Roboto", "text": "#E8EAED", "header": "#E8EAED", "fill": "#202124", "accent": "#8AB4F8", "accentText": "#202124",
+  "background": "#171717", "grid": "#3C4043", "increase": "#81C995", "decrease": "#F28B82", "border": "#3C4043", "borderWeight": 1, "borderRadius": 8,
+  "series": ["#8AB4F8", "#FDD663", "#81C995", "#F28B82", "#C58AF9", "#78D9EC", "#FCAD70", "#E8EAED"] }

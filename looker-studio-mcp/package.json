@@ -13,7 +13,8 @@
     "dist",
     "knowledge",
     "examples",
-    "README.md"
+    "README.md",
+    "themes"
   ],
   "scripts": {
     "build": "tsc",

@@ -135,6 +135,10 @@ export interface BindFieldsArgs {
   metrics: string[];
   /** replace (default) the primary slot, or append to it. */
   mode?: 'replace' | 'append';
+  /** Remove primary dimensions when `dimensions` is empty (gauge, bullet, scorecard from a table). */
+  clearDimensions?: boolean;
+  /** Extra concept slots by conceptKey: { x_metric: ["SUM(a)"], breakdown: ["canal"] }. */
+  slots?: Record<string, string[]>;
 }
 
 export interface BindFieldsResult {
